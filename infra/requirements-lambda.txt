@@ -1,0 +1,7 @@
+# Production dependencies vendored into the Lambda deployment zip (see build_package.sh /
+# lambda_package.tf). Mirrors pyproject.toml's [project.dependencies], MINUS boto3: the AWS
+# Lambda Python runtime provides boto3/botocore preinstalled, so vendoring it here would only
+# bloat the zip. Keep this file's versions in sync with pyproject.toml by hand — there is no
+# automated check for that yet.
+pydantic>=2.7
+requests>=2.32
