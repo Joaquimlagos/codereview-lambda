@@ -1,0 +1,36 @@
+[project]
+name = "codereview-lambda"
+version = "0.1.0"
+description = "Lambda implementations for the AI PR review pipeline"
+requires-python = ">=3.14"
+dependencies = [
+    "boto3>=1.34",
+    "pydantic>=2.7",
+    "PyJWT[crypto]>=2.8",
+    "requests>=2.32",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "ruff>=0.5",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["route_model", "retrieve_context", "invoke_llm", "post_comment", "contracts", "integrations"]
+package-dir = { "" = "src" }

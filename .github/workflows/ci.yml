@@ -1,0 +1,71 @@
+# Checks only: no deploy, no AWS access, no external API calls, and no secrets. The tests run
+# entirely against local stubs (Principle IV), and `terraform validate` needs no credentials.
+name: CI
+
+# Same triggers as codereview-infra: pushes to main, and every pull request. Push is limited to
+# main so a branch with an open PR is checked once (by the PR), not twice.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: python
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The Lambda runtime version (infra/*.tf: runtime = "python3.14"; pyproject.toml requires it).
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # Runtime dependencies plus the dev extra (pytest, ruff) — same as the local Quick Start.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check src tests
+
+      - name: Test
+        run: pytest
+
+  terraform:
+    name: terraform
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # 1.15.8 is the version used to develop and validate this configuration. versions.tf only
+      # requires >= 1.10 (S3 native state locking), the same constraint as codereview-infra.
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Format check
+        run: terraform fmt -check -recursive -diff
+
+      # -backend=false: the S3 backend (backend.tf) needs AWS credentials, which CI does not have.
+      - name: Init
+        run: terraform init -backend=false
+
+      - name: Validate
+        run: terraform validate

@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars (gitignored) and adjust.
+
+# Tags every resource; matches codereview-infra's environment.
+environment = "dev"
+
+# Interpreter build_package.sh uses to vendor Lambda dependencies. Only needed when
+# `python3` on PATH isn't the right one (e.g. Windows: point it at the venv's python.exe).
+# python_bin = "C:/path/to/codereview-lambda/.venv/Scripts/python.exe"
+
+# GitHub App PostComment posts reviews as (identifiers, not secrets). App ID: the App's
+# settings page. Installation ID: the number at the end of the installation's settings URL
+# (github.com/settings/installations/<id>, or the org's equivalent).
+github_app_id              = "123456"
+github_app_installation_id = "12345678"
