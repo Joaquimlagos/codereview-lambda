@@ -14,23 +14,27 @@ documents the validation *scenarios* and what each proves.
 - Python 3.14 environment with the project's dependencies installed (`boto3`, `pydantic`,
   `requests`, `pytest`) — see `CLAUDE.md`'s Quick Start section.
 - Local stub implementations of Jev, Gemini, and GitHub active (default in the test/dev
-  configuration; no real credentials needed) per Principle IV / FR-011. Gemini is called
-  directly by `InvokeLLM` — no separate routing service to stand up. For a real (non-stub)
+  configuration; no real credentials needed) per Principle IV / FR-011. Gemini and Groq are
+  called directly by `InvokeLLM` — no separate routing service to stand up. For a real (non-stub)
   run, populate `.env` from `.env.example` with `TYPESAFE_API_KEY`, `TYPESAFE_API_BASE`,
-  `GEMINI_API_KEY`, `GEMINI_API_BASE`, `GEMINI_MODEL_LOW`/`MEDIUM`/`HIGH`, `GITHUB_TOKEN`,
-  and `DIFF_BUCKET` (in production `DIFF_BUCKET` instead falls back to SSM — see
+  `GEMINI_API_KEY`, `GEMINI_API_BASE`, `GROQ_API_KEY`, `GROQ_API_BASE`,
+  `LLM_MODELS_LOW`/`MEDIUM`/`HIGH`, `GITHUB_APP_ID`,
+  `GITHUB_APP_INSTALLATION_ID`, and `GITHUB_APP_PRIVATE_KEY_PATH` (the GitHub App's `.pem`,
+  kept outside the repo — see the README's "GitHub App setup").
+  The S3 bucket holding both the diff (`prs/`) and the RAG index (`index/`) is not a `.env`
+  variable — it comes from the event itself (`diffBucket`, alongside `diffKey`; see
   `research.md`).
 
 ## Scenario 1 — End-to-end review on a stored diff (validates SC-001, User Story 1)
 
-1. Seed LocalStack S3 with a fixture diff and note its key as `diff_ref`.
+1. Seed LocalStack S3 with a fixture diff and note its bucket/key as `diff_bucket`/`diff_key`.
 2. Terraform (`infra/`) publishes each Lambda's ARN to SSM natively at
    `/codereview/lambda/{state}/arn` (kebab-case state slugs: `route-model`,
    `retrieve-context`, `invoke-llm`, `post-comment` — confirmed against `codereview-infra`'s
    `lambda_arns.tf`, see `research.md`), satisfying FR-010 as part of `terraform apply` —
    no separate publish step.
-3. Invoke `RouteModel` with a `PullRequestEvent` referencing that `diff_ref`, with the Jev stub
-   configured to return `needsContext: false`.
+3. Invoke `RouteModel` with a `PullRequestEvent` referencing that `diff_bucket`/`diff_key`, with
+   the Jev stub configured to return `needsContext: false`.
 4. Feed its output straight into `InvokeLLM` (skipping `RetrieveContext`, per FR-005), then feed
    `InvokeLLM`'s output into `PostComment`.
 5. **Expected**: the GitHub stub records exactly one posted comment for the PR, containing
@@ -47,10 +51,19 @@ documents the validation *scenarios* and what each proves.
 
 1. Invoke `RouteModel` with a fixture diff and a Jev stub configured to return
    `needsContext: true`.
-2. Feed its output into `RetrieveContext`; **expected**: a non-null `context_ref` (and `sources`
-   MAY be empty per the spec Edge Case).
+2. Seed the same LocalStack bucket with a fixture `index/develop/index.json` (the shape
+   `codereview-app`'s `scripts/build_index.py` publishes) whose `model`/`dimensions` match the
+   embedding stub's, then feed RouteModel's output into `RetrieveContext` with that stub;
+   **expected**: `indexAvailable: true` and up to 3 `chunks`, ordered by similarity to the
+   embedded diff (`chunks` MAY be empty per the spec Edge Case).
 3. Feed both outputs into `InvokeLLM`; **expected**: the LLM stub call records the retrieved
-   context alongside the diff, not the diff alone.
+   chunks alongside the diff, and its prompt carries them under a section labelled as reference
+   material rather than as part of the diff.
+4. Re-run step 2 against a bucket with **no** index object; **expected**: `indexAvailable: false`
+   with empty `chunks` and no error — the review still proceeds, just without project context.
+5. Re-run step 2 against an index whose `model` or `dimensions` disagree with the embedding
+   client's; **expected**: the run fails with `IndexCompatibilityError` rather than ranking
+   across incompatible vector spaces.
 
 ## Scenario 4 — Fallback on routing failure (validates SC-005)
 

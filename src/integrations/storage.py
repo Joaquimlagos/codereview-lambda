@@ -1,4 +1,8 @@
-"""S3-backed storage abstraction: diff/context resolved by reference key only (FR-013)."""
+"""S3-backed storage abstraction: diff and RAG index resolved by reference key only (FR-013).
+
+Read-only by design: no Lambda writes to S3 (retrieved context travels inline in the Step
+Functions payload), and none of their execution roles holds `s3:PutObject`.
+"""
 
 from abc import ABC, abstractmethod
 
@@ -10,11 +14,7 @@ class StorageError(Exception):
 class Storage(ABC):
     @abstractmethod
     def get_text(self, key: str) -> str:
-        """Resolve a diff_ref/context_ref key to its stored text content."""
-
-    @abstractmethod
-    def put_text(self, key: str, content: str) -> str:
-        """Store text content under `key` and return that key."""
+        """Resolve a storage key (diff or RAG index) to its stored text content."""
 
 
 class S3Storage(Storage):
@@ -31,10 +31,6 @@ class S3Storage(Storage):
             raise StorageError(f"Key not found: {key}") from exc
         return response["Body"].read().decode("utf-8")
 
-    def put_text(self, key: str, content: str) -> str:
-        self._client.put_object(Bucket=self._bucket, Key=key, Body=content.encode("utf-8"))
-        return key
-
 
 class StubStorage(Storage):
     """Network-free in-memory stand-in for tests (Principle IV, FR-011)."""
@@ -46,7 +42,3 @@ class StubStorage(Storage):
         if key not in self._data:
             raise StorageError(f"Key not found: {key}")
         return self._data[key]
-
-    def put_text(self, key: str, content: str) -> str:
-        self._data[key] = content
-        return key

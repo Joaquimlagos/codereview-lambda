@@ -39,7 +39,7 @@ Windows), set `-var python_bin=/path/to/python`.
 One folder per Lambda, one Lambda per Step Functions state (Principle II). Expected states, per the `codereview-infra` Step Functions definition:
 
 - `route_model/` — decides which Gemini model/route to use (via Jev, Principle III)
-- `retrieve_context/` — fetches RAG context (S3)
+- `retrieve_context/` — semantic retrieval: embeds the diff and ranks codereview-app's published index (S3 + Gemini embeddings)
 - `invoke_llm/` — calls the Gemini API directly, selecting the model by complexity tier itself (no separate routing service, Principle III)
 - `post_comment/` — posts the review result back (GitHub)
 
@@ -68,4 +68,4 @@ Builds the deployment package by hand (`infra/.build/package/` + `infra/.build/l
 ## Related repos
 
 - `codereview-infra` — defines the Step Functions state machine and publishes the ARN naming contract via SSM, which this repo's Lambdas read to resolve their own resources.
-- `codereview-app` (not yet created) — will trigger the initial pipeline event via GitHub Actions.
+- `codereview-app` — the application under review. Its GitHub Actions upload each PR's diff to the shared artifacts bucket and publish the pipeline's trigger event (`pr-checks.yml`), and build the RAG embedding index that `RetrieveContext` reads (`index-codebase.yml`).

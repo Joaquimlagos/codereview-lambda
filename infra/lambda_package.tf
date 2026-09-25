@@ -32,9 +32,11 @@ data "archive_file" "lambda_src" {
   depends_on = [null_resource.build_lambda_package]
 }
 
-# Bucket name published by codereview-infra's s3.tf, read here instead of hardcoded —
-# used by route-model, retrieve-context, and invoke-llm (all three read/write PR diffs or
-# retrieved-context text via the same bucket, per DIFF_BUCKET in the application code).
-data "aws_ssm_parameter" "pr_diffs_bucket_name" {
-  name = "/${var.project_name}/s3/pr-diffs-bucket-name"
+# Shared artifacts bucket published by codereview-infra's s3.tf (one bucket, split by prefix:
+# prs/ for diff claim checks, index/ for the RAG index). Read here instead of hardcoded —
+# used to scope retrieve-context's and invoke-llm's S3 policies. The application code itself
+# never resolves this via env var/SSM: each function gets its bucket directly from the
+# incoming event (PullRequestEvent.diff_bucket).
+data "aws_ssm_parameter" "artifacts_bucket_name" {
+  name = "/${var.project_name}/s3/artifacts-bucket-name"
 }

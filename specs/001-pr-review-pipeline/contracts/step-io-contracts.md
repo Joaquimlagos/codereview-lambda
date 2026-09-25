@@ -26,15 +26,23 @@ only the keys they need from it (see "Input" per stage).
 
 ## RouteModel
 
-**Input** (`PullRequestEvent`, the original trigger event, unnested):
+**Input** (`PullRequestEvent`, the original trigger event, unnested — the real event published
+by `codereview-app`, camelCase on the wire per `src/contracts/models.py`'s `alias_generator`):
 ```json
 {
-  "pr_id": "string",
+  "prNumber": "int",
   "repository": "string",
-  "revision": "string",
-  "diff_ref": "string"
+  "sha": "string",
+  "diffBucket": "string",
+  "diffKey": "string",
+  "filesChanged": "int",
+  "linesAdded": "int",
+  "linesRemoved": "int",
+  "paths": ["string", "..."]
 }
 ```
+RouteModel never reads the diff body — the Jev "state" is built entirely from
+`files_changed`/`lines_added`/`lines_removed`/`paths`.
 
 **Output** (`RoutingDecision` — returned flat; Step Functions nests it under `$.routing`):
 ```json
@@ -59,20 +67,43 @@ that branch, not this Lambda.
 `routing` (the `RoutingDecision` above) nested by Step Functions:
 ```json
 {
-  "pr_id": "string", "repository": "string", "revision": "string", "diff_ref": "string",
+  "prNumber": 1, "repository": "string", "sha": "string",
+  "diffBucket": "string", "diffKey": "string",
+  "filesChanged": 1, "linesAdded": 1, "linesRemoved": 1, "paths": ["string"],
   "routing": { "complexity": "low | medium | high", "needsContext": true }
 }
 ```
+
+**Also read** — the RAG index at `index/develop/index.json` in the *same* bucket the event's
+`diffBucket` names (codereview-infra's `s3.tf` provisions one artifacts bucket split by prefix:
+`prs/` for diffs, `index/` for the index). The index object's shape is owned by codereview-app's
+`scripts/build_index.py`, which is the authoritative source for it:
+```json
+{
+  "version": 1, "branch": "develop", "commit": "string", "generatedAt": "string",
+  "model": "gemini-embedding-001", "dimensions": 768,
+  "chunks": [{ "path": "string", "text": "string", "vector": [0.0] }]
+}
+```
+Two compatibility rules apply before any scoring, because an index built against a different
+vector space produces a plausible-looking but meaningless ranking:
+
+- `model` MUST equal the model this Lambda embeds its query with (`gemini-embedding-001`).
+- `dimensions` MUST equal the length of the query vector it just produced (768).
+
+A mismatch on either is a hard failure. A *missing* index object is different in kind — it only
+means develop has not been indexed yet — and degrades to `indexAvailable: false` with no chunks.
 
 **Output** (`RetrievedContext` — returned flat; nested under `$.context`):
 ```json
 {
   "pr_id": "string",
-  "context_ref": "string",
-  "sources": ["string", "..."]
+  "chunks": [{ "path": "string", "text": "string" }],
+  "index_available": true
 }
 ```
-`sources` MAY be `[]`.
+`chunks` MAY be `[]`, and holds at most `TOP_K` (3) entries, ranked by cosine similarity against
+the embedded diff. `index_available` is `false` only in the missing-index case above.
 
 ## InvokeLLM
 
@@ -80,22 +111,73 @@ that branch, not this Lambda.
 (`RoutingDecision`), and `context` (`RetrievedContext`) when `RetrieveContext` ran (the key is
 absent from the event entirely when it was skipped, per FR-005).
 
+`InvokeLLM` instructs Gemini (via `build_prompt`, `src/integrations/llm_router.py`) to reply
+with ONLY a JSON object shaped `{"summary": "string", "comments": [{"path", "line", "body"}]}`,
+with the diff's hunk headers preserved so the model can work out each `line`'s post-change
+number. `parse_review_response` parses that response defensively: if it isn't valid JSON in
+that shape, the whole raw response becomes `summary` and `comments` is forced to `[]`
+(`parse_fallback: true` on the result) rather than failing the run — see research.md's
+"Inline review comments" decision for why this degrades instead of raising. A genuinely *empty*
+response is still a hard failure (`LlmRouterError`), unchanged from before.
+
+**Model fallback**: each complexity tier resolves to an ordered list of
+`provider:model[:reasoning]` entries (`LLM_MODELS_LOW/MEDIUM/HIGH`, comma-separated; providers
+`gemini` and `groq`). `InvokeLLM` tries them in order, moving to the next entry when a model
+fails transiently or no longer exists; any other failure stops immediately. Before each
+attempt it stops if the Lambda has less than one full attempt's time left (50 s). The entry
+that answered is reported in `model_used` (e.g. `"groq:openai/gpt-oss-120b:low"`), and
+`fell_back` is `true` when it wasn't the tier's first choice.
+
+**Errors** (the Lambda `errorType` Step Functions sees):
+
+- `LlmTransientError`: every entry failed, at least one of them transiently (HTTP
+  429/500/502/503/504, or a network timeout/connection error), or the Lambda ran out of time
+  for another attempt. Safe to retry. `codereview-infra`'s `Retry` on the `InvokeLLM` state
+  matches this exact string, so the class name MUST NOT change; each retry re-runs the whole
+  list.
+- `LlmModelNotFoundError`: every entry's model is gone (HTTP 404, or Groq's
+  `model_not_found`/`model_decommissioned`). A configuration problem; not retried.
+- `LlmRouterError`: a model failed permanently (400, 401, 403, a blocked response, or an empty
+  one that wasn't cut off by the output limit). An empty answer caused by the output limit
+  (Groq `finish_reason: "length"`, Gemini `finishReason: "MAX_TOKENS"`) is not permanent: the
+  router tries the next entry, and counts it as transient if the whole list ends that way.
+  Not retried.
+
+See research.md's "Gemini model lifecycle and error classification" and "Multi-provider model
+fallback" decisions.
+
 **Output** (`GeneratedReview` — returned flat; nested under `$.analysis`):
 ```json
 {
   "pr_id": "string",
-  "review_text": "string",
-  "model_used": "string"
+  "summary": "string",
+  "comments": [{ "path": "string", "line": 1, "body": "string" }],
+  "model_used": "string",
+  "fell_back": false,
+  "parse_fallback": false
 }
 ```
-`review_text` MUST NOT be empty; a generation failure MUST NOT produce this shape at all (FR-008)
-— the pipeline surfaces the failure instead of emitting a hollow `GeneratedReview`.
+`summary` MUST NOT be empty; a generation failure (no candidates, or a genuinely empty
+response) MUST NOT produce this shape at all (FR-008) — the pipeline surfaces the failure
+instead of emitting a hollow `GeneratedReview`. `comments` MAY be `[]` — a review with nothing
+line-specific to flag is valid, not an error. `line` is the line number on the file's
+post-change ("+"/right) side.
 
 ## PostComment
 
-**Input**: the accumulated event; `PostComment` reads `analysis` (the `GeneratedReview` above)
-and the top-level `repository` field from it — it needs `repository` to know which GitHub repo
-to post the comment to (`src/post_comment/handler.py` reads `event["repository"]` directly).
+**Input**: the accumulated event; `PostComment` reads `analysis` (the `GeneratedReview` above),
+the top-level `repository` field (which GitHub repo to post to), and the top-level `sha` field
+(which commit to anchor the review's inline comments to) — all read directly off the event
+(`src/post_comment/handler.py`).
+
+`PostComment` posts `summary` + `comments` as one GitHub PR review via
+`POST /repos/{repo}/pulls/{pr}/reviews`, body `{"commit_id": sha, "body": summary,
+"event": "COMMENT", "comments": [{"path", "line", "side": "RIGHT", "body"}]}`. `event` is
+always `"COMMENT"` — never `APPROVE`/`REQUEST_CHANGES` — so the AI review stays advisory/
+non-blocking. GitHub rejects the whole review with **422** if any comment's `line` isn't part
+of the diff; `RestGitHubClient` catches that and falls back to a single plain comment via
+`POST /repos/{repo}/issues/{pr}/comments` (`summary` + each comment's `path:line — body`
+concatenated as text) rather than losing the review outright.
 
 **Output** (`ReviewComment` — returned flat; nested under `$.postComment`):
 ```json
@@ -105,15 +187,20 @@ to post the comment to (`src/post_comment/handler.py` reads `event["repository"]
   "posted": "boolean"
 }
 ```
-A failed post MUST raise/flag visibly rather than return `posted: false` silently swallowed
-(FR-007, spec Edge Case) — `posted: false` is only ever surfaced through a monitored failure path,
-never as a quiet successful-looking output.
+`comment_id` holds whichever identifier GitHub returned for whatever was actually posted — the
+review's `id` on success, or the fallback comment's `id` when the 422 path was taken; the shape
+doesn't distinguish which happened (only the value in GitHub itself does). A failed post MUST
+raise/flag visibly rather than return `posted: false` silently swallowed (FR-007, spec Edge
+Case) — `posted: false` is only ever surfaced through a monitored failure path, never as a
+quiet successful-looking output.
 
 ## Cross-cutting rules
 
 - Every field above is required unless explicitly marked optional/absent.
-- No stage inlines diff or context content — only reference keys (`diff_ref`, `context_ref`)
-  cross stage boundaries (FR-013).
+- No stage inlines *diff* content — the diff crosses stage boundaries only as a reference
+  (`diffBucket`/`diffKey`, FR-013). Retrieved context is the deliberate exception: at most 3
+  chunks ride inline in `$.context`, which keeps `InvokeLLM`'s S3 access scoped to `prs/*` and
+  costs one fewer round trip (see data-model.md).
 - Every shape is validated at both the producing and the consuming end in `tests/contract`
   (SC-004): producers assert their *own returned* shape matches the model; consumers assert they
   correctly read their expected keys out of a fixture accumulated event, with no adapter/

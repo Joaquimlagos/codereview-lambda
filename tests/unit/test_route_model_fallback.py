@@ -7,10 +7,10 @@ from invoke_llm.handler import invoke_llm
 from route_model.handler import FALLBACK_DECISION, route_model
 
 
-def test_decision_engine_failure_falls_back_to_medium(pr_event, stub_storage, stub_decision_engine):
+def test_decision_engine_failure_falls_back_to_medium(pr_event, stub_decision_engine):
     stub_decision_engine.fail = True
 
-    output = route_model(pr_event, storage=stub_storage, decision_engine=stub_decision_engine)
+    output = route_model(pr_event, decision_engine=stub_decision_engine)
 
     assert output == FALLBACK_DECISION.model_dump()
     assert output["complexity"] == "medium"

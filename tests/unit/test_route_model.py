@@ -1,26 +1,30 @@
 """Unit tests: the local decision-engine stub classifies by changed-line thresholds
-(spec.md Assumptions: low <= 50, medium 51-400, high > 400).
+(spec.md Assumptions: low <= 50, medium 51-400, high > 400), computed from
+linesAdded + linesRemoved on the event — RouteModel never reads the diff itself.
 """
 
-from integrations.storage import StubStorage
 from route_model.handler import route_model
 
 
-def test_small_diff_classified_low(pr_event, stub_storage, stub_decision_engine):
-    output = route_model(pr_event, storage=stub_storage, decision_engine=stub_decision_engine)
+def test_small_change_classified_low(pr_event, stub_decision_engine):
+    event = {**pr_event, "linesAdded": 8, "linesRemoved": 2}  # 10 total
+
+    output = route_model(event, decision_engine=stub_decision_engine)
+
     assert output["complexity"] == "low"
 
 
-def test_medium_diff_classified_medium(pr_event, stub_decision_engine):
-    medium_diff = "diff --git a/f b/f\n" + "\n".join(f"+line {i}" for i in range(200))
-    storage = StubStorage(initial={pr_event["diff_ref"]: medium_diff})
+def test_medium_change_classified_medium(pr_event, stub_decision_engine):
+    event = {**pr_event, "linesAdded": 150, "linesRemoved": 50}  # 200 total
 
-    output = route_model(pr_event, storage=storage, decision_engine=stub_decision_engine)
+    output = route_model(event, decision_engine=stub_decision_engine)
+
     assert output["complexity"] == "medium"
 
 
-def test_large_diff_classified_high(pr_event, stub_decision_engine, large_diff):
-    storage = StubStorage(initial={pr_event["diff_ref"]: large_diff})
+def test_large_change_classified_high(pr_event, stub_decision_engine):
+    event = {**pr_event, "linesAdded": 400, "linesRemoved": 50}  # 450 total
 
-    output = route_model(pr_event, storage=storage, decision_engine=stub_decision_engine)
+    output = route_model(event, decision_engine=stub_decision_engine)
+
     assert output["complexity"] == "high"

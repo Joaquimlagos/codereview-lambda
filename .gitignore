@@ -14,6 +14,7 @@ build/
 .env
 .env.*
 !.env.example
+*.pem
 
 # Terraform (infra/)
 **/.terraform/

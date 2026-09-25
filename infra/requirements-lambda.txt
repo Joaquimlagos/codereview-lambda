@@ -4,4 +4,5 @@
 # bloat the zip. Keep this file's versions in sync with pyproject.toml by hand — there is no
 # automated check for that yet.
 pydantic>=2.7
+PyJWT[crypto]>=2.8
 requests>=2.32

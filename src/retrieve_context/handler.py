@@ -1,53 +1,137 @@
-"""RetrieveContext Lambda: assembles project context, only invoked when RouteModel set
-needsContext (FR-004).
+"""RetrieveContext Lambda: semantic retrieval over codereview-app's RAG index (FR-004).
 
-KNOWN STUB, not real RAG: this handler does NOT search a vector index or any external
-knowledge source. It only regex-parses the `diff --git a/X b/Y` header lines already
-present in the diff text itself to list touched file paths ("sources"), then wraps that
-file list around the same diff text as the "context" it stores. No project file content
-beyond the diff is ever read. This is intentional for the project's current stage — see
-research.md's "simple text/file-relevance based strategy" decision and the matching note in
-README.md — but it means retrieved "context" today is really just the diff, annotated.
+Only invoked when RouteModel set needsContext. Reads the embedding index published by
+codereview-app (`index/develop/index.json` in the same artifacts bucket the diff lives in),
+embeds the PR diff as a retrieval *query*, and returns the TOP_K most cosine-similar chunks.
+
+Index contract (owned by codereview-app's scripts/build_index.py, mirrored in
+specs/001-pr-review-pipeline/contracts/step-io-contracts.md):
+
+    {"version": 1, "branch": "develop", "commit": "<sha>", "generatedAt": "<iso8601>",
+     "model": "gemini-embedding-001", "dimensions": 768,
+     "chunks": [{"path": "src/...", "text": "<file contents>", "vector": [768 floats]}]}
+
+`model` and `dimensions` are verified against this Lambda's own embedding client before any
+scoring: vectors produced by a different model, or truncated to a different dimensionality,
+are not comparable, so a mismatch is a hard failure rather than a silently meaningless
+ranking. A missing index is different in kind — it just means develop has not been indexed
+yet — so that degrades gracefully to "no context" instead of failing the run.
 """
 
-import re
+import json
+import math
 
-from contracts.models import PullRequestEvent, RetrievedContext
-from integrations.config import resolve_config_value
-from integrations.storage import S3Storage, Storage
+from contracts.models import ContextChunk, PullRequestEvent, RetrievedContext
+from integrations.config import require_env
+from integrations.embeddings import EmbeddingClient, GeminiEmbeddingClient
+from integrations.secrets import resolve_api_key
+from integrations.storage import S3Storage, Storage, StorageError
 
-_DIFF_FILE_PATTERN = re.compile(r"^diff --git a/(\S+) b/(\S+)", re.MULTILINE)
+# Published by codereview-app's index-codebase.yml workflow on every push to develop.
+INDEX_KEY = "index/develop/index.json"
+TOP_K = 3
 
-# Local .env/env var fallback, else the bucket name published by codereview-infra's s3.tf.
-DIFF_BUCKET_ENV = "DIFF_BUCKET"
-DIFF_BUCKET_SSM_PARAM = "/codereview/s3/pr-diffs-bucket-name"
+# Same secret and resolution pattern InvokeLLM uses — this function needs the Gemini key to
+# embed the diff (see infra/iam_retrieve_context.tf for the matching IAM grant).
+GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
+GEMINI_API_KEY_SECRET_ARN_ENV = "GEMINI_API_KEY_SECRET_ARN"
+
+# The top-level PullRequestEvent fields present on the accumulated Step Functions event —
+# camelCase, matching what codereview-app actually publishes.
+_PR_EVENT_KEYS = (
+    "prNumber",
+    "repository",
+    "sha",
+    "diffBucket",
+    "diffKey",
+    "filesChanged",
+    "linesAdded",
+    "linesRemoved",
+    "paths",
+)
 
 
-def _default_storage() -> Storage:
-    return S3Storage(bucket=resolve_config_value(DIFF_BUCKET_ENV, DIFF_BUCKET_SSM_PARAM))
+class IndexCompatibilityError(Exception):
+    """Raised when the index was built with a different embedding model/dimensionality."""
 
 
-def _extract_sources(diff_text: str) -> list[str]:
-    """File paths touched by the diff; MAY be empty when nothing is identifiable (Edge Case)."""
-    return sorted({match.group(2) for match in _DIFF_FILE_PATTERN.finditer(diff_text)})
+def _default_embedding_client() -> EmbeddingClient:
+    api_key = resolve_api_key(GEMINI_API_KEY_ENV, GEMINI_API_KEY_SECRET_ARN_ENV)
+    return GeminiEmbeddingClient(api_base=require_env("GEMINI_API_BASE"), api_key=api_key)
 
 
-def retrieve_context(event: dict, storage: Storage | None = None) -> dict:
-    pr_event = PullRequestEvent.model_validate(
-        {k: event[k] for k in ("pr_id", "repository", "revision", "diff_ref")}
-    )
-    storage = storage or _default_storage()
+def _verify_index_compatibility(
+    index: dict, client: EmbeddingClient, query_vector: list[float]
+) -> None:
+    index_model = index.get("model")
+    if index_model != client.model:
+        raise IndexCompatibilityError(
+            f"Index was built with embedding model {index_model!r} but this function queries "
+            f"with {client.model!r}; vectors from different models are not comparable. "
+            "Rebuild the index (codereview-app's index-codebase workflow) or align the models."
+        )
+
+    index_dimensions = index.get("dimensions")
+    if index_dimensions != len(query_vector):
+        raise IndexCompatibilityError(
+            f"Index declares {index_dimensions} dimensions but the query vector has "
+            f"{len(query_vector)}; vectors of different lengths are not comparable. "
+            "Rebuild the index or align outputDimensionality on both sides."
+        )
+
+
+def _cosine_similarity(vector_a: list[float], vector_b: list[float]) -> float:
+    """Plain-Python cosine similarity — no numpy: at a few hundred 768-float vectors per run
+    this is tens of milliseconds, and skipping numpy keeps the other three Lambdas from
+    carrying its ~57 MB of vendored OpenBLAS in the shared deployment zip for no benefit.
+
+    A zero-norm vector scores 0 rather than raising a ZeroDivisionError — such a vector is
+    degenerate and should simply never rank, not blow up the whole retrieval.
+    """
+    dot_product = sum(a * b for a, b in zip(vector_a, vector_b, strict=True))
+    norm_a = math.sqrt(sum(a * a for a in vector_a))
+    norm_b = math.sqrt(sum(b * b for b in vector_b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot_product / (norm_a * norm_b)
+
+
+def _top_chunks(chunks: list[dict], query_vector: list[float], top_k: int) -> list[ContextChunk]:
+    """The `top_k` chunks with the highest cosine similarity to `query_vector`."""
+    scored = [(_cosine_similarity(chunk["vector"], query_vector), chunk) for chunk in chunks]
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    return [ContextChunk(path=chunk["path"], text=chunk["text"]) for _, chunk in scored[:top_k]]
+
+
+def retrieve_context(
+    event: dict,
+    storage: Storage | None = None,
+    embedding_client: EmbeddingClient | None = None,
+) -> dict:
+    pr_event = PullRequestEvent.model_validate({k: event[k] for k in _PR_EVENT_KEYS})
+    # The event is self-describing about where its artifacts live: the diff and the index
+    # share the one artifacts bucket (codereview-infra's s3.tf splits them by prefix).
+    storage = storage or S3Storage(bucket=pr_event.diff_bucket)
+    embedding_client = embedding_client or _default_embedding_client()
+    pr_id = str(pr_event.pr_number)
+
+    try:
+        index_raw = storage.get_text(INDEX_KEY)
+    except StorageError:
+        # No index yet (nothing merged to develop): review the diff without project context
+        # rather than failing the whole run.
+        return RetrievedContext(pr_id=pr_id, chunks=[], index_available=False).model_dump()
+
+    index = json.loads(index_raw)
 
     # A diff that cannot be found/read MUST fail the run visibly (spec Edge Case).
-    diff_text = storage.get_text(pr_event.diff_ref)
-    sources = _extract_sources(diff_text)
-    files_note = ", ".join(sources) if sources else "(no related files identified)"
-    context_text = f"Files touched: {files_note}\n\n{diff_text}"
-    context_ref = storage.put_text(
-        f"context/{pr_event.pr_id}-{pr_event.revision}.txt", context_text
-    )
+    diff_text = storage.get_text(pr_event.diff_key)
+    query_vector = embedding_client.embed_query(diff_text)
 
-    context = RetrievedContext(pr_id=pr_event.pr_id, context_ref=context_ref, sources=sources)
+    _verify_index_compatibility(index, embedding_client, query_vector)
+
+    chunks = _top_chunks(index.get("chunks") or [], query_vector, TOP_K)
+    context = RetrievedContext(pr_id=pr_id, chunks=chunks, index_available=True)
     return context.model_dump()
 
 

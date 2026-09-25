@@ -10,4 +10,5 @@ def test_context_not_needed_runs_without_retrieved_context(pr_event, stub_storag
     invoke_llm(event_after_route, storage=stub_storage, llm_router=stub_llm_router)
 
     call = stub_llm_router.calls[0]
-    assert call["context_text"] is None
+    assert call["context_chunks"] == []
+    assert "=== ADDITIONAL PROJECT CONTEXT ===" not in call["prompt"]

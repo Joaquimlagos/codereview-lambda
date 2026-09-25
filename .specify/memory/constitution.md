@@ -1,28 +1,30 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 1.0.0 → 1.1.0
-Rationale: InvokeLLM was implemented to call the Gemini `generateContent` API directly
-(GEMINI_API_BASE + a model resolved per complexity tier, in-Lambda), not through a
-separately deployed "9router" proxy service as Principles III/IV and the Technology
-Constraints originally described. This amendment removes the 9router requirement and
-documents the actual architecture. Treated as MINOR: the principle's enforceable intent
-(free-tier Gemini models only, no paid-tier calls, Jev for structured decisions) is
-unchanged — only an implementation-level routing detail is removed, not the principle
-itself.
+Version change: 1.1.1 → 1.2.0
+Rationale: Principle III required generation to use only Gemini free-tier models. In
+practice, Gemini's free tier returned 503 "high demand" often enough to fail whole runs,
+and a latency diagnosis on a real review prompt showed long, unpredictable delays. The
+pipeline now falls back across providers (Gemini and Groq) within each complexity tier.
+The principle is rewritten around what it is actually protecting — free-tier-only
+generation, three complexity tiers, selection inside InvokeLLM, no routing service — without
+naming providers or models; the concrete providers, models and measurements live in
+specs/001-pr-review-pipeline/research.md ("Multi-provider model fallback") and the
+LLM_MODELS_* config. Treated as MINOR: the set of allowed generation sources is materially
+expanded (any free-tier provider, not only Gemini), while every existing obligation
+(free tier only, no paid-tier calls, Jev for structured decisions) is kept.
 
 Modified principles:
-- III. Cost-Conscious Model Usage — removed "routed through the local 9router"; now
-  states calls go directly to the Gemini API, with model-tier selection performed in the
-  InvokeLLM Lambda itself.
-- IV. External Integrations Behind Testable Abstractions — "Gemini/9router" → "Gemini" in
-  the list of integrations requiring a testable abstraction.
+- III. Cost-Conscious Model Usage — "three Gemini free-tier models, one per complexity
+  tier" → "three complexity tiers, each served by free-tier models, with fallback across
+  providers".
 
 Added sections: none
 Removed sections: none
 
 Other changes:
-- Technology Constraints' LLM-generation bullet updated to match (no 9router).
+- Technology Constraints' LLM-generation bullet reworded to match.
+- Development Workflow: "generative Gemini calls" → "generative LLM calls".
 
 Follow-up TODOs: none.
 -->
@@ -55,11 +57,13 @@ rather than in-code branching.
 
 ### III. Cost-Conscious Model Usage
 The project MUST run within free-tier limits during this phase. Generative LLM
-calls MUST use only the three Gemini free-tier models (flash-lite, flash, pro),
-called directly from the InvokeLLM Lambda — model selection by complexity tier
-is performed in that Lambda itself, with no separate routing service in front
-of the Gemini API. Structured decisions that do not require open-ended
-generation — model routing and RAG-necessity checks — MUST use Jev (TypeSafe
+calls MUST be organized into three complexity tiers, each served by free-tier
+models with fallback across providers, called directly from the InvokeLLM
+Lambda — model selection by complexity tier, and falling back to the next model
+or provider, is performed in that Lambda itself, with no separate routing
+service in front of the providers' APIs. Structured decisions that do not
+require open-ended generation — model routing and RAG-necessity checks — MUST
+use Jev (TypeSafe
 AI), an external decision model, rather than spending a generative LLM call on
 them.
 
@@ -100,7 +104,7 @@ marginal performance gains that add complexity.
 
 ## Technology Constraints
 
-- LLM generation: Gemini free-tier models only (flash-lite, flash, pro), called directly from the InvokeLLM Lambda, which performs the complexity-tier → model selection itself — no paid-tier model calls, no separate routing service.
+- LLM generation: three complexity tiers, each served by free-tier models with fallback across providers, called directly from the InvokeLLM Lambda, which performs the complexity-tier → model selection and the fallback itself — no paid-tier model calls, no separate routing service.
 - Structured decisioning (routing, RAG-necessity): Jev (TypeSafe AI), not a generative LLM call.
 - Orchestration: AWS Step Functions, with one Lambda per state as required by Principle II.
 - Storage/context: S3 for RAG context artifacts; SSM for configuration and secrets — both accessed only through the abstractions required by Principle IV.
@@ -110,7 +114,7 @@ marginal performance gains that add complexity.
 
 - Every PR MUST be reviewed against these principles before merge; a change that adds a new Step Functions state MUST add a corresponding new, independent Lambda (Principle II), not extend an existing handler.
 - A new external integration MUST ship with its testable abstraction and a local stub from the same PR that introduces its first caller (Principle IV).
-- Reviewers MUST confirm generative Gemini calls are not used where a structured/deterministic decision (routing, RAG-necessity) would suffice (Principle III).
+- Reviewers MUST confirm generative LLM calls are not used where a structured/deterministic decision (routing, RAG-necessity) would suffice (Principle III).
 - Code, comments, and docs MUST be reviewed for English-only compliance regardless of the language used in the PR description or discussion (Principle I).
 
 ## Governance
@@ -129,4 +133,4 @@ constitution. Any deviation must be justified in the relevant plan/PR
 description; unjustified complexity or violations of Principles I–VI should
 be flagged in review.
 
-**Version**: 1.1.0 | **Ratified**: 2026-09-18 | **Last Amended**: 2026-09-21
+**Version**: 1.2.0 | **Ratified**: 2026-09-18 | **Last Amended**: 2026-09-24

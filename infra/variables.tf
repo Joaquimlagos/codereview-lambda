@@ -21,3 +21,23 @@ variable "python_bin" {
   type        = string
   default     = "python3"
 }
+
+variable "github_app_id" {
+  description = "Numeric ID of the GitHub App PostComment authenticates as (App settings page, \"App ID\"). An identifier, not a secret."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]+$", var.github_app_id))
+    error_message = "github_app_id must be the App's numeric ID."
+  }
+}
+
+variable "github_app_installation_id" {
+  description = "Numeric ID of the App's installation on the repository/org being reviewed (the number at the end of the installation's settings URL). An identifier, not a secret."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]+$", var.github_app_installation_id))
+    error_message = "github_app_installation_id must be the installation's numeric ID."
+  }
+}
