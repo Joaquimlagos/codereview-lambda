@@ -83,8 +83,19 @@ resource "aws_iam_role_policy" "invoke_llm_read_diffs" {
   policy = data.aws_iam_policy_document.invoke_llm_read_diffs.json
 }
 
+# The function's log group. Lambda would otherwise create it on first invocation, outside
+# Terraform and with no expiry; declaring it here lets Terraform set the retention. Named from
+# the function's name (locals.tf) and depended on by the function below, so on a fresh
+# deployment the group exists, with its retention, before the function can log to it.
+resource "aws_cloudwatch_log_group" "invoke_llm" {
+  name              = "/aws/lambda/${local.function_names.invoke_llm}"
+  retention_in_days = local.log_retention_days
+
+  tags = local.common_tags
+}
+
 resource "aws_lambda_function" "invoke_llm" {
-  function_name = "${var.project_name}-invoke-llm"
+  function_name = local.function_names.invoke_llm
   role          = aws_iam_role.invoke_llm.arn
   handler       = "invoke_llm.handler.handler"
   runtime       = "python3.14"
@@ -121,6 +132,8 @@ resource "aws_lambda_function" "invoke_llm" {
       LLM_MODELS_HIGH           = "groq:openai/gpt-oss-120b:medium,gemini:gemini-3.5-flash:low"
     }
   }
+
+  depends_on = [aws_cloudwatch_log_group.invoke_llm]
 
   tags = local.common_tags
 }

@@ -50,8 +50,19 @@ resource "aws_iam_role_policy" "post_comment_read_github_app_private_key" {
   policy = data.aws_iam_policy_document.post_comment_read_github_app_private_key.json
 }
 
+# The function's log group. Lambda would otherwise create it on first invocation, outside
+# Terraform and with no expiry; declaring it here lets Terraform set the retention. Named from
+# the function's name (locals.tf) and depended on by the function below, so on a fresh
+# deployment the group exists, with its retention, before the function can log to it.
+resource "aws_cloudwatch_log_group" "post_comment" {
+  name              = "/aws/lambda/${local.function_names.post_comment}"
+  retention_in_days = local.log_retention_days
+
+  tags = local.common_tags
+}
+
 resource "aws_lambda_function" "post_comment" {
-  function_name = "${var.project_name}-post-comment"
+  function_name = local.function_names.post_comment
   role          = aws_iam_role.post_comment.arn
   handler       = "post_comment.handler.handler"
   runtime       = "python3.14"
@@ -76,6 +87,8 @@ resource "aws_lambda_function" "post_comment" {
       GITHUB_APP_PRIVATE_KEY_SECRET_ARN = data.aws_ssm_parameter.github_app_private_key_arn.value
     }
   }
+
+  depends_on = [aws_cloudwatch_log_group.post_comment]
 
   tags = local.common_tags
 }
