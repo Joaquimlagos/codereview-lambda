@@ -64,8 +64,19 @@ resource "aws_iam_role_policy" "retrieve_context_read_gemini_secret" {
   policy = data.aws_iam_policy_document.retrieve_context_read_gemini_secret.json
 }
 
+# The function's log group. Lambda would otherwise create it on first invocation, outside
+# Terraform and with no expiry; declaring it here lets Terraform set the retention. Named from
+# the function's name (locals.tf) and depended on by the function below, so on a fresh
+# deployment the group exists, with its retention, before the function can log to it.
+resource "aws_cloudwatch_log_group" "retrieve_context" {
+  name              = "/aws/lambda/${local.function_names.retrieve_context}"
+  retention_in_days = local.log_retention_days
+
+  tags = local.common_tags
+}
+
 resource "aws_lambda_function" "retrieve_context" {
-  function_name = "${var.project_name}-retrieve-context"
+  function_name = local.function_names.retrieve_context
   role          = aws_iam_role.retrieve_context.arn
   handler       = "retrieve_context.handler.handler"
   runtime       = "python3.14"
@@ -92,6 +103,8 @@ resource "aws_lambda_function" "retrieve_context" {
       GEMINI_API_KEY_SECRET_ARN = data.aws_ssm_parameter.gemini_api_key_arn.value
     }
   }
+
+  depends_on = [aws_cloudwatch_log_group.retrieve_context]
 
   tags = local.common_tags
 }

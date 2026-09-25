@@ -47,7 +47,7 @@ Each Lambda folder is self-contained: its own handler, own IAM policy reference,
 
 External integrations (Jev, Gemini, S3, SSM, GitHub) live behind testable abstractions per Principle IV, in a shared `src/integrations/` package (one module per external system, each with a real client and a local stub) — not per-Lambda duplicates.
 
-`infra/` holds this repo's Terraform: one execution role + `aws_lambda_function` per Lambda (`iam_route_model.tf`, `iam_retrieve_context.tf`, `iam_invoke_llm.tf`, `iam_post_comment.tf`), each least-privilege-scoped (only its own secret, if any; S3 read/write only where the handler actually needs it), plus native ARN publishing to SSM (`arn_publish.tf`).
+`infra/` holds this repo's Terraform: one execution role + `aws_lambda_function` per Lambda (`iam_route_model.tf`, `iam_retrieve_context.tf`, `iam_invoke_llm.tf`, `iam_post_comment.tf`), each least-privilege-scoped (only its own secret, if any; S3 read/write only where the handler actually needs it), plus native ARN publishing to SSM (`arn_publish.tf`), and one CloudWatch log group per Lambda with a fixed retention (see Log retention below).
 
 ## Commands
 
@@ -60,10 +60,24 @@ ruff check src tests
 ```
 
 ```sh
+cd infra && terraform fmt -check -recursive && terraform init -backend=false && terraform validate
+```
+
+The Terraform half of CI (see below): checks formatting and validity without AWS credentials, the S3 backend, or a built package.
+
+```sh
 cd infra && bash build_package.sh
 ```
 
 Builds the deployment package by hand (`infra/.build/package/` + `infra/.build/lambda_src.zip`) without running Terraform — useful for inspecting/measuring the artifact. `terraform apply` runs this automatically as part of provisioning (see Quick Start above).
+
+## CI
+
+`.github/workflows/ci.yml` runs on pushes to `main` and on every pull request (same triggers as `codereview-infra`) with two parallel jobs — `python` (3.14: `pip install -e ".[dev]"`, `ruff check src tests`, `pytest`) and `terraform` (1.15.8: `fmt -check -recursive`, `init -backend=false`, `validate` in `infra/`). Checks only: no deploy, no AWS access, no external APIs, no secrets (`permissions: contents: read`). The tests use local stubs only, so they need no `.env`, credentials or network — keep it that way: a test that needs any of those belongs outside this suite.
+
+## Log retention
+
+The four `/aws/lambda/codereview-*` log groups are managed by Terraform with `retention_in_days = 7` (`log_retention_days` in `infra/locals.tf`); each `aws_cloudwatch_log_group` sits next to its function in `infra/iam_*.tf`, and function names are defined once in `locals.tf` (`local.function_names`). Step Functions has no log group of its own (logging is off in `codereview-infra`). The groups pre-existed, so they were adopted once with `import` blocks that have since been removed on purpose — don't re-add them: an `import` of a missing object is an error and would break `terraform plan` on a fresh deployment (where Terraform just creates the groups).
 
 ## Related repos
 

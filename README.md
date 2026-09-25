@@ -64,6 +64,43 @@ To create and connect the App:
 The `codereview/github-token` secret still exists in `codereview-infra`, but `PostComment` no
 longer uses it and its role can no longer read it.
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on pushes to `main` and on every pull request (the same triggers
+as `codereview-infra`, so a branch with an open PR is checked once, not twice), with two jobs in
+parallel. It only checks: it never deploys, has no AWS access, calls no external API, and uses
+no secrets (`permissions: contents: read`).
+
+- **`python`**: Python 3.14 (the Lambda runtime version), `pip install -e ".[dev]"`,
+  `ruff check src tests`, and `pytest`. The suite runs entirely against local stubs, so it needs
+  no `.env`, credentials or network.
+- **`terraform`**: Terraform 1.15.8 (`versions.tf` requires `>= 1.10`), then in `infra/`:
+  `terraform fmt -check -recursive`, `terraform init -backend=false` (the S3 backend needs AWS
+  credentials) and `terraform validate`. The build `null_resource` and the `archive_file` data
+  source don't get in the way: `validate` neither runs provisioners nor reads data sources, so
+  the deployment package doesn't need to be built first.
+
+To run the same checks locally: `pytest`, `ruff check src tests`, and in `infra/`
+`terraform fmt -check -recursive && terraform init -backend=false && terraform validate`.
+
+## Log retention
+
+Each Lambda's CloudWatch log group (`/aws/lambda/codereview-<function>`) is managed by Terraform
+with `retention_in_days = 7`. AWS creates these groups automatically on a function's first
+invocation, with no expiry, so without this the logs would be kept, and billed, forever. Every
+function's Terraform file (`infra/iam_*.tf`) declares its group and the function depends on it;
+the function names are defined once in `infra/locals.tf`, so a function and its log group can't
+drift apart. To change the retention, edit `log_retention_days` in `infra/locals.tf`.
+
+Step Functions has no log group of its own to manage: the state machine, owned by
+`codereview-infra`, has logging turned off.
+
+**History:** the groups already existed when Terraform took them over, so they were adopted into
+the state once with `import` blocks (in a temporary `infra/imports.tf`, since deleted). The
+blocks are not kept on purpose: an `import` of an object that doesn't exist is an error, so they
+would make `terraform plan` fail on a fresh deployment, where Terraform simply creates the
+groups.
+
 ## Known limitations (current stage)
 
 - **The RAG index only covers `develop`.** `RetrieveContext` reads a single index object,
