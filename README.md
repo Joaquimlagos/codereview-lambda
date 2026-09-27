@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Joaquimlagos/codereview-lambda/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Joaquimlagos/codereview-lambda/actions/workflows/ci.yml)
 
-Harness serverless que roteia PRs entre modelos LLM (Gemini) conforme complexidade, usa RAG para contexto do projeto e comenta a análise automaticamente no PR.
+Serverless harness that routes pull requests to LLM models (Groq, Gemini) by complexity, uses RAG for project context, and automatically comments its review on the PR.
 
 ## Architecture
 
@@ -32,7 +32,8 @@ Harness serverless que roteia PRs entre modelos LLM (Gemini) conforme complexida
                        │      tries the complexity tier's model list, in order:
                        │
                        │      Groq ──▶ Gemini      ◀─ FALLBACK 1: next provider when a model
-                       │                              fails transiently (429 / 5xx / timeout)
+                       │                              fails transiently (429 / 5xx / timeout),
+                       │                              rejects the prompt as too large (413),
                        │                              or no longer exists (404)
                        │      every model down ──▶ LlmTransientError ──▶ Step Functions retries
                        │
@@ -103,12 +104,23 @@ an ordered fallback list of free-tier models from two providers, Groq and Gemini
 `groq:openai/gpt-oss-120b:low`; the optional reasoning level is sent only when present.
 
 `InvokeLLM` tries the entries in order. It moves to the next one when a model fails
-transiently (HTTP 429/5xx or a timeout) or no longer exists (404); a permanent error such as a
-bad request or key (400/401/403) stops immediately. Before each attempt it checks the Lambda's
-remaining time and stops early with a retryable error rather than being cut off by Lambda's
-timeout. If every entry fails transiently, Step Functions retries the whole step. The review
-output records which model answered (`model_used`) and whether a fallback happened
-(`fell_back`). Free-tier availability varies a lot between models; see
+transiently (HTTP 429/5xx or a timeout), when the prompt is too large for that model (HTTP
+413), or when the model no longer exists (404); a permanent error such as a bad request or key
+(400/401/403) stops immediately. Before each attempt it checks the Lambda's remaining time and
+stops early with a retryable error rather than being cut off by Lambda's timeout. If every
+entry fails transiently, Step Functions retries the whole step. The review output records which
+model answered (`model_used`) and whether a fallback happened (`fell_back`).
+
+HTTP 413 is grouped with the transient failures so a review isn't aborted when the prompt (the
+diff plus the retrieved RAG files) exceeds one model's limit. On Groq's free tier the limit is
+per request: `gpt-oss-120b` allows 8,000 tokens per minute, and a single request larger than
+that is refused with a 413 regardless of when it is sent. That is a limit of *that model*, so
+the next entry in the list, from a provider with a larger limit, may accept the same prompt.
+Retrying the same model would not help. (If every entry rejects the prompt as too large, Step
+Functions' retry re-runs the same list with the same prompt and fails the same way; the way to
+avoid that is a smaller prompt, not another attempt.)
+
+Free-tier availability varies a lot between models; see
 `specs/001-pr-review-pipeline/research.md`'s "Multi-provider model fallback" decision for the
 measurements behind the current lists.
 

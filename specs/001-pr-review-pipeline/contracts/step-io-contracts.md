@@ -131,10 +131,11 @@ that answered is reported in `model_used` (e.g. `"groq:openai/gpt-oss-120b:low"`
 **Errors** (the Lambda `errorType` Step Functions sees):
 
 - `LlmTransientError`: every entry failed, at least one of them transiently (HTTP
-  429/500/502/503/504, or a network timeout/connection error), or the Lambda ran out of time
-  for another attempt. Safe to retry. `codereview-infra`'s `Retry` on the `InvokeLLM` state
-  matches this exact string, so the class name MUST NOT change; each retry re-runs the whole
-  list.
+  429/500/502/503/504, or a network timeout/connection error) or because the prompt was too
+  large for that model (HTTP 413), or the Lambda ran out of time for another attempt. Safe to
+  retry, except when every entry answered 413: the same prompt fails the same way.
+  `codereview-infra`'s `Retry` on the `InvokeLLM` state matches this exact string, so the class
+  name MUST NOT change; each retry re-runs the whole list.
 - `LlmModelNotFoundError`: every entry's model is gone (HTTP 404, or Groq's
   `model_not_found`/`model_decommissioned`). A configuration problem; not retried.
 - `LlmRouterError`: a model failed permanently (400, 401, 403, a blocked response, or an empty
