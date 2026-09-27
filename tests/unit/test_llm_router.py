@@ -182,7 +182,7 @@ def test_gemini_skips_reasoning_parts_and_joins_answer_text():
     assert _gemini(session).generate("gemini-3.5-flash", "p") == REVIEW_JSON
 
 
-@pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
+@pytest.mark.parametrize("status", [413, 429, 500, 502, 503, 504])
 def test_gemini_transient_statuses(status):
     session = FakeSession(FakeResponse(status, {"error": {"message": "overloaded"}}))
 
@@ -244,7 +244,7 @@ def test_groq_returns_content_not_the_separate_reasoning_field():
     assert _groq(FakeSession(_groq_ok(REVIEW_JSON))).generate("m", "p") == REVIEW_JSON
 
 
-@pytest.mark.parametrize("status", [429, 503])
+@pytest.mark.parametrize("status", [413, 429, 503])
 def test_groq_transient_statuses(status):
     session = FakeSession(FakeResponse(status, {"error": {"message": "rate limited"}}))
 
@@ -486,3 +486,65 @@ def test_whole_list_truncated_raises_transient_with_details(two_provider_tier):
     message = str(exc_info.value)
     assert "gemini:gemini-3.5-flash:low: MAX_TOKENS, no answer" in message
     assert "groq:openai/gpt-oss-120b:low: length, no answer" in message
+
+
+# --- HTTP 413: request too large for one model's limit ------------------------------------
+
+# Groq's real response (captured from the API) when a single request exceeds a model's
+# tokens-per-minute limit. Its `code` is the same "rate_limit_exceeded" a 429 carries, so only
+# the HTTP status tells the two apart.
+GROQ_413_BODY = {
+    "error": {
+        "message": (
+            "Request too large for model `openai/gpt-oss-120b` in organization `org_test` "
+            "service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 18340, "
+            "please reduce your message size and try again."
+        ),
+        "type": "tokens",
+        "code": "rate_limit_exceeded",
+    }
+}
+
+
+def test_groq_413_request_too_large_is_transient_not_permanent():
+    session = FakeSession(FakeResponse(413, GROQ_413_BODY))
+
+    with pytest.raises(LlmTransientError, match="413") as exc_info:
+        _groq(session).generate("openai/gpt-oss-120b", "a very large prompt", "medium")
+
+    assert "Request too large" in str(exc_info.value)
+
+
+def test_413_from_the_first_model_advances_to_the_next_model(monkeypatch):
+    """The diff plus the retrieved RAG files can exceed one model's limit. The review must not
+    abort: the router moves on to the next entry, whose model may accept the same prompt."""
+    monkeypatch.setenv(
+        "LLM_MODELS_MEDIUM", "groq:openai/gpt-oss-120b:medium,gemini:gemini-3.5-flash:low"
+    )
+    groq_session = FakeSession(FakeResponse(413, GROQ_413_BODY))
+    gemini = FakeClient({"gemini-3.5-flash": REVIEW_JSON})
+    router = _router({"groq": _groq(groq_session), "gemini": gemini})
+
+    review = _review(router)
+
+    assert len(groq_session.requests) == 1  # tried once, not retried against the same model
+    assert gemini.calls == [("gemini-3.5-flash", "low")]
+    assert review.model_used == "gemini:gemini-3.5-flash:low"
+    assert review.fell_back is True
+    assert review.summary == "Adds logging."
+
+
+def test_413_on_every_model_raises_transient_naming_each_model(monkeypatch):
+    monkeypatch.setenv(
+        "LLM_MODELS_MEDIUM", "groq:openai/gpt-oss-120b:medium,gemini:gemini-3.5-flash:low"
+    )
+    groq_session = FakeSession(FakeResponse(413, GROQ_413_BODY))
+    gemini_session = FakeSession(FakeResponse(413, {"error": {"message": "payload too large"}}))
+    router = _router({"groq": _groq(groq_session), "gemini": _gemini(gemini_session)})
+
+    with pytest.raises(LlmTransientError) as exc_info:
+        _review(router)
+
+    message = str(exc_info.value)
+    assert "groq:openai/gpt-oss-120b:medium" in message and "Request too large" in message
+    assert "gemini:gemini-3.5-flash:low" in message and "payload too large" in message
