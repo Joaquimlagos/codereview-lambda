@@ -106,6 +106,12 @@ class LlmTransientError(LlmRouterError):
     timeout/connection error — and, from the router, when every model in the tier failed
     this way or the Lambda ran out of time for another attempt.
 
+    HTTP 413 (request too large) is grouped here too, but for a different reason: it does not
+    clear up on its own for that model (Groq's free tier answers it when a single request
+    exceeds the model's tokens-per-minute limit), yet a *different* model with a larger limit
+    may well accept the same prompt, so the router moves on to the next entry rather than
+    stopping.
+
     The class name is a cross-repo contract: Lambda reports it as the invocation's
     errorType, and codereview-infra's Step Functions definition matches its Retry on that
     exact string — so this MUST NOT be renamed. Subclassing LlmRouterError keeps any
@@ -132,7 +138,10 @@ class LlmModelNotFoundError(LlmRouterError):
 
 
 # Retried by moving to the next model, and at the Step Functions level (LlmTransientError).
-_TRANSIENT_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+# 413 is here so a prompt too large for one model's limit (e.g. the diff plus the retrieved RAG
+# files exceeding Groq's tokens-per-minute limit) falls back to the next model instead of
+# aborting the review. Unlike the others it will not clear up by retrying the *same* model.
+_TRANSIENT_STATUS_CODES = frozenset({413, 429, 500, 502, 503, 504})
 # Groq's (OpenAI-style) error codes for a model that no longer exists; Groq can return them
 # with HTTP 400 rather than 404.
 _MODEL_GONE_ERROR_CODES = frozenset({"model_not_found", "model_decommissioned"})

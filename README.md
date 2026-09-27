@@ -1,5 +1,100 @@
 # codereview-lambda
-Harness serverless que roteia PRs entre modelos LLM (Gemini) conforme complexidade, usa RAG para contexto do projeto e comenta a análise automaticamente no PR.
+
+[![CI](https://github.com/Joaquimlagos/codereview-lambda/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Joaquimlagos/codereview-lambda/actions/workflows/ci.yml)
+
+Serverless harness that routes pull requests to LLM models (Groq, Gemini) by complexity, uses RAG for project context, and automatically comments its review on the PR.
+
+## Architecture
+
+```text
+[codereview-app]  GitHub Actions, on every pull request
+   │
+   ├─ uploads the diff ───────────────────────▶ S3  prs/{pr}/{sha}.diff
+   └─ publishes PRReviewRequested (PR metadata + diff key only)
+        │
+[codereview-infra]
+        ▼
+   EventBridge ──▶ Step Functions state machine
+                       │
+[codereview-lambda]    │  (this repo: one Lambda per state)
+                       │
+                       ├─ 1. RouteModel
+                       │      classifies the PR: complexity (low / medium / high) and
+                       │      whether it needs project context
+                       │
+                       ├─ needsContext?
+                       │      ├─ yes ─▶ 2. RetrieveContext
+                       │      │            RAG: embeds the diff, ranks the project's index
+                       │      │            (S3 index/), returns the 3 closest files
+                       │      └─ no  ─▶ (skipped)
+                       │
+                       ├─ 3. InvokeLLM
+                       │      tries the complexity tier's model list, in order:
+                       │
+                       │      Groq ──▶ Gemini      ◀─ FALLBACK 1: next provider when a model
+                       │                              fails transiently (429 / 5xx / timeout),
+                       │                              rejects the prompt as too large (413),
+                       │                              or no longer exists (404)
+                       │      every model down ──▶ LlmTransientError ──▶ Step Functions retries
+                       │
+                       └─ 4. PostComment
+                              signs in as a GitHub App and posts one review, each comment
+                              anchored to a line of the diff
+                              │
+                              └─ GitHub answers 422 (a comment's line isn't in the diff)
+                                    ──▶ FALLBACK 2: one plain PR comment (summary + comments)
+```
+
+- **Fallback 1** keeps a review from failing because one model or provider is overloaded or
+  retired; see [Model selection](#model-selection).
+- **Fallback 2** keeps a review from being lost because one comment points at a line GitHub
+  won't anchor to; see [Review comments](#review-comments).
+- The state machine (including the `needsContext` branch and the retry on `LlmTransientError`)
+  is defined in `codereview-infra`; this repository implements the four Lambdas it calls.
+
+## Part of a 3-repo pipeline
+
+This is one of three independent repositories that make up the pipeline:
+
+| Repository | Role |
+|---|---|
+| [`codereview-app`](https://github.com/Joaquimlagos/codereview-app) | **Triggers.** A deliberately simple Java / Spring Boot "Task Manager" that exists to generate pull requests of different complexity. Its GitHub Actions authenticate to AWS with OIDC, upload each PR's diff to S3 and publish the `PRReviewRequested` event, and build the RAG index of the codebase. |
+| [`codereview-infra`](https://github.com/Joaquimlagos/codereview-infra) | **Orchestrates.** Terraform for the glue between the services: the EventBridge bus and rule that receive the event, the Step Functions state machine that calls the four Lambdas in order, the shared S3 artifacts bucket, the (initially empty) Secrets Manager secrets, and the IAM role the app's workflows assume. |
+| **`codereview-lambda`** (this repo) | **Executes.** The four Lambda functions that do the work (routing, retrieval, LLM review, posting the comment), with their least-privilege IAM roles, CloudWatch log groups, and the SSM parameters that publish their ARNs to the state machine. |
+
+**At runtime** the chain is linear: the app **triggers**, infra **orchestrates**, lambda
+**executes**.
+
+**At deploy time** it isn't, because infra and lambda hand each other values through SSM
+Parameter Store in both directions: infra publishes the secret ARNs and the bucket name the
+Lambdas need, and the Lambdas publish the ARNs the state machine needs. The order is:
+
+1. `codereview-infra`: the secrets and the artifacts bucket only (a targeted apply), then fill
+   in the secret values.
+2. `codereview-lambda`: apply. It reads those values from SSM, deploys the four Lambdas, and
+   publishes their ARNs to `/codereview/lambda/<state>/arn`.
+3. `codereview-infra`: full apply. It reads the Lambda ARNs and creates EventBridge, Step
+   Functions and the OIDC role.
+4. `codereview-app`: can now trigger the pipeline (its OIDC role only exists after step 3).
+
+The exact commands are in [`codereview-infra`'s README](https://github.com/Joaquimlagos/codereview-infra#bootstrap-order)
+("Bootstrap order").
+
+## Why this exists
+
+Reviewing every pull request by hand is slow, and much of a first pass is repetitive: the same
+kinds of nitpicks and missed checks, PR after PR. This pipeline gives each PR an automated first
+review. An LLM reads the diff (plus related project files when the change needs them) and leaves
+comments on the exact lines it is talking about, so people can spend their review time on design
+and intent. The review is advisory: it comments, and never approves or blocks a PR. It is a
+portfolio project, built to run entirely on free-tier services.
+
+**Built with spec-driven development**, as part of an AI-agent-assisted workflow: the feature
+was specified, planned and broken into tasks with [GitHub Spec Kit](https://github.com/github/spec-kit)
+(tooling in [`.specify/`](.specify), specification and design artifacts in
+[`specs/001-pr-review-pipeline/`](specs/001-pr-review-pipeline)), governed by a
+[constitution](.specify/memory/constitution.md), and implemented together with an AI coding
+agent (Claude Code).
 
 ## Model selection
 
@@ -9,12 +104,23 @@ an ordered fallback list of free-tier models from two providers, Groq and Gemini
 `groq:openai/gpt-oss-120b:low`; the optional reasoning level is sent only when present.
 
 `InvokeLLM` tries the entries in order. It moves to the next one when a model fails
-transiently (HTTP 429/5xx or a timeout) or no longer exists (404); a permanent error such as a
-bad request or key (400/401/403) stops immediately. Before each attempt it checks the Lambda's
-remaining time and stops early with a retryable error rather than being cut off by Lambda's
-timeout. If every entry fails transiently, Step Functions retries the whole step. The review
-output records which model answered (`model_used`) and whether a fallback happened
-(`fell_back`). Free-tier availability varies a lot between models; see
+transiently (HTTP 429/5xx or a timeout), when the prompt is too large for that model (HTTP
+413), or when the model no longer exists (404); a permanent error such as a bad request or key
+(400/401/403) stops immediately. Before each attempt it checks the Lambda's remaining time and
+stops early with a retryable error rather than being cut off by Lambda's timeout. If every
+entry fails transiently, Step Functions retries the whole step. The review output records which
+model answered (`model_used`) and whether a fallback happened (`fell_back`).
+
+HTTP 413 is grouped with the transient failures so a review isn't aborted when the prompt (the
+diff plus the retrieved RAG files) exceeds one model's limit. On Groq's free tier the limit is
+per request: `gpt-oss-120b` allows 8,000 tokens per minute, and a single request larger than
+that is refused with a 413 regardless of when it is sent. That is a limit of *that model*, so
+the next entry in the list, from a provider with a larger limit, may accept the same prompt.
+Retrying the same model would not help. (If every entry rejects the prompt as too large, Step
+Functions' retry re-runs the same list with the same prompt and fails the same way; the way to
+avoid that is a smaller prompt, not another attempt.)
+
+Free-tier availability varies a lot between models; see
 `specs/001-pr-review-pipeline/research.md`'s "Multi-provider model fallback" decision for the
 measurements behind the current lists.
 

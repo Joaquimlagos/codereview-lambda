@@ -391,7 +391,14 @@ in `LLM_MODELS_*`, and Gemma is out. Kept for the measurements and reasoning tha
   (which Groq can send with HTTP 400), raise `LlmModelNotFoundError`, and the router moves to
   the next entry: providers remove free-tier models without notice. If every entry is gone,
   `LlmModelNotFoundError` reaches Step Functions and is not retried (a configuration
-  problem). A model that hits its output limit before writing any answer (Groq
+  problem). HTTP 413 (request too large) is in the transient set, so the router moves to the
+  next entry when the prompt exceeds one model's limit. Groq answers a 413 with
+  `code: "rate_limit_exceeded"` (the same code as a 429) when a single request is larger than
+  the model's tokens-per-minute limit ("Limit 8000, Requested 18340" was captured from the
+  real API for `gpt-oss-120b`), so the status, not the code, is what tells them apart. Unlike
+  the other transient statuses it won't clear up by retrying the same model; if every entry
+  answers 413, Step Functions' retry re-runs the same list with the same prompt. A model that
+  hits its output limit before writing any answer (Groq
   `finish_reason: "length"`, Gemini `finishReason: "MAX_TOKENS"`, with empty content) raises
   `LlmOutputTruncatedError`, and the router also moves to the next entry, since another
   model may well answer; if the whole list ends that way, a retryable `LlmTransientError`
