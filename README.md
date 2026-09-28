@@ -99,42 +99,56 @@ agent (Claude Code).
 ## Model selection
 
 `RouteModel` classifies each PR as `low`, `medium` or `high` complexity, and each tier maps to
-an ordered fallback list of free-tier models from two providers, Groq and Gemini
+an ordered fallback list of free-tier models from three providers, Groq, Cerebras and Gemini
 (`LLM_MODELS_LOW/MEDIUM/HIGH`). Each entry is `provider:model[:reasoning]`, for example
-`groq:openai/gpt-oss-120b:low`; the optional reasoning level is sent only when present.
+`groq:openai/gpt-oss-120b:low`; the optional reasoning level is sent only when present. Groq
+and Cerebras both serve the same `gpt-oss-120b` model — Cerebras was added as a second
+`gpt-oss-120b` fallback with a much larger free-tier token ceiling (30,000 tokens/minute vs.
+Groq's 8,000), for PRs whose diff alone is too large for Groq to accept at all.
 
 `InvokeLLM` tries the entries in order. It moves to the next one when a model fails
 transiently (HTTP 429/5xx or a timeout), when the prompt is too large for that model (HTTP
-413), or when the model no longer exists (404); a permanent error such as a bad request or key
-(400/401/403) stops immediately. Before each attempt it checks the Lambda's remaining time and
-stops early with a retryable error rather than being cut off by Lambda's timeout. If every
-entry fails transiently, Step Functions retries the whole step. The review output records which
-model answered (`model_used`) and whether a fallback happened (`fell_back`).
+413 on Groq, HTTP 429 with `code: "token_quota_exceeded"` on Cerebras — a different status/
+shape per provider, but both already fall into the same transient classification), or when
+the model no longer exists (404); a permanent error such as a bad request or key (400/401/403)
+stops immediately. Before each attempt it checks the Lambda's remaining time and stops early
+with a retryable error rather than being cut off by Lambda's timeout. If every entry fails
+transiently, Step Functions retries the whole step. The review output records which model
+answered (`model_used`) and whether a fallback happened (`fell_back`).
 
-HTTP 413 is grouped with the transient failures so a review isn't aborted when the prompt (the
-diff plus the retrieved RAG files) exceeds one model's limit. On Groq's free tier the limit is
-per request: `gpt-oss-120b` allows 8,000 tokens per minute, and a single request larger than
-that is refused with a 413 regardless of when it is sent. That is a limit of *that model*, so
-the next entry in the list, from a provider with a larger limit, may accept the same prompt.
-Retrying the same model would not help. (If every entry rejects the prompt as too large, Step
-Functions' retry re-runs the same list with the same prompt and fails the same way; the way to
-avoid that is a smaller prompt, not another attempt.)
+HTTP 413/429-as-too-large is grouped with the transient failures so a review isn't aborted
+when the prompt (the diff plus the retrieved RAG files) exceeds one model's limit. On Groq's
+free tier the limit is checked per request, *before* the call runs: `gpt-oss-120b` allows
+8,000 tokens per minute, and a single request larger than that is refused with a 413
+regardless of when it is sent. Cerebras' equivalent limit is checked against *actual* usage
+instead (confirmed with a real test call: a tiny prompt with a 29,000-token output cap still
+succeeded, using only the tokens it actually generated) — either way, that is a limit of *that
+model*, so the next entry in the list, from a provider with a larger limit, may accept the
+same prompt. Retrying the same model would not help. (If every entry rejects the prompt as too
+large, Step Functions' retry re-runs the same list with the same prompt and fails the same
+way; the way to avoid that is a smaller prompt, not another attempt.)
 
 Free-tier availability varies a lot between models; see
-`specs/001-pr-review-pipeline/research.md`'s "Multi-provider model fallback" decision for the
-measurements behind the current lists.
+`specs/001-pr-review-pipeline/research.md`'s "Multi-provider model fallback" and "Cerebras as
+a third fallback provider" decisions for the measurements behind the current lists.
 
 **The high tier gets a genuinely different configuration, not just the same one twice — and
 runs it first, not as a rarely-reached fallback.** `LLM_MODELS_HIGH` leads with Gemini at
-`thinkingLevel: "high"`, then falls back to Groq at `medium`. Leading with Groq (as low and
-medium do) would leave the deeper Gemini pass almost never reached in practice, since Groq's
-`medium` attempt succeeds most of the time — making the high tier behave like medium's
-config despite being configured differently. Gemini `high` measured 6 inline comments vs. 2
-at `low` on the same real prompt; Groq `medium` is the fallback, not the lead, because `high`
-effort on Groq reliably exhausts its output budget on reasoning alone and returns nothing
-(tested directly). The `high` Gemini call is also much slower (measured up to 63 s vs. 9–31 s
-at `low`), so it gets its own longer timeout and the Lambda's overall timeout is 180 s rather
-than 150 s. See research.md's "High-tier reasoning: why Gemini, not Groq".
+`thinkingLevel: "high"`, then falls back to Cerebras at `medium`, then Groq at `medium`.
+Leading with Groq (as low and medium do) would leave the deeper Gemini pass almost never
+reached in practice, since Groq's `medium` attempt succeeds most of the time — making the
+high tier behave like medium's config despite being configured differently. Gemini `high`
+measured 6 inline comments vs. 2 at `low` on the same real prompt; Groq `medium` is a
+fallback, not the lead, because `high` effort on Groq reliably exhausts its output budget on
+reasoning alone and returns nothing (tested directly). Cerebras sits between Gemini and Groq
+in this tier specifically because a large diff can exhaust both of the others at once: Gemini
+`high` risks its 90 s read timeout on a large prompt (measured 84.7 s on a small ~600-token
+diff; a ~6,500-token diff timed out entirely in production), and Groq's 8,000 TPM ceiling
+rejects that same large diff outright — Cerebras' 30,000 TPM ceiling covers exactly that gap.
+The `high` Gemini call is also much slower than low/medium reasoning (measured up to 63 s vs.
+9–31 s at `low`), so it gets its own longer timeout, and with three fallback attempts instead
+of two the Lambda's overall timeout is 230 s rather than 180 s. See research.md's "High-tier
+reasoning: why Gemini, not Groq" and "Cerebras as a third fallback provider".
 
 ## Review quality
 

@@ -1,9 +1,12 @@
 """Unit tests for the multi-provider LLM router, with no network:
 
 - model-list parsing (`provider:model[:reasoning]`);
-- GeminiClient and GroqClient against a fake HTTP session: error classification (transient,
-  model gone, permanent), reasoning configuration sent only when requested, answer
-  extraction;
+- GeminiClient, GroqClient, and CerebrasClient against a fake HTTP session: error
+  classification (transient, model gone, permanent), reasoning configuration sent only when
+  requested, answer extraction; Groq and Cerebras share their request/response handling
+  (`_openai_compatible_generate`), so CerebrasClient's tests focus on what differs (base
+  URL/key, its own output cap) rather than re-proving every error-classification case Groq's
+  tests already cover for the shared code path;
 - MultiProviderLlmRouter against fake clients: fallback across providers, stop on permanent
   errors, the all-models-gone case, and the Lambda-deadline guard.
 """
@@ -17,8 +20,10 @@ from contracts.models import Complexity
 from integrations.config import ConfigError
 from integrations.llm_router import (
     ATTEMPT_TIME_BUDGET_MS,
+    CEREBRAS_MAX_COMPLETION_TOKENS,
     GEMINI_HIGH_REASONING_ATTEMPT_BUDGET_MS,
     GEMINI_HIGH_REASONING_READ_TIMEOUT_SECONDS,
+    CerebrasClient,
     GeminiClient,
     GroqClient,
     LlmModelNotFoundError,
@@ -99,6 +104,10 @@ def _groq(session: FakeSession) -> GroqClient:
     return GroqClient(api_base="https://groq.test/openai/v1", api_key="k", session=session)
 
 
+def _cerebras(session: FakeSession) -> CerebrasClient:
+    return CerebrasClient(api_base="https://cerebras.test/v1", api_key="k", session=session)
+
+
 def _router(clients: dict[str, ModelClient], remaining_time_ms=None) -> MultiProviderLlmRouter:
     factories = {provider: (lambda c=client: c) for provider, client in clients.items()}
     return MultiProviderLlmRouter(client_factories=factories, remaining_time_ms=remaining_time_ms)
@@ -120,6 +129,9 @@ def test_parse_model_spec_with_and_without_reasoning():
     )
     assert parse_model_spec("groq:openai/gpt-oss-120b:medium").label == (
         "groq:openai/gpt-oss-120b:medium"
+    )
+    assert parse_model_spec("cerebras:gpt-oss-120b:medium") == ModelSpec(
+        "cerebras", "gpt-oss-120b", "medium"
     )
 
 
@@ -284,6 +296,94 @@ def test_groq_empty_content_is_an_empty_response_error():
         _groq(FakeSession(_groq_ok(""))).generate("openai/gpt-oss-120b", "p")
 
 
+# --- Cerebras client -----------------------------------------------------------------------
+#
+# Cerebras and Groq share `_openai_compatible_generate`, so these tests focus on what's
+# actually different (base URL/key, its own output cap) rather than re-proving every
+# error-classification case Groq's tests above already cover for the shared code path. The
+# error bodies below are the real shapes captured from a live Cerebras test call (see
+# research.md, "Cerebras as a third fallback provider") — different from Groq's, but both
+# already fall into the router's existing transient/model-gone classification unmodified.
+
+
+def test_cerebras_calls_chat_completions_with_reasoning_effort_only_when_requested():
+    with_reasoning = FakeSession(_groq_ok(REVIEW_JSON))
+    without = FakeSession(_groq_ok(REVIEW_JSON))
+
+    _cerebras(with_reasoning).generate("gpt-oss-120b", "the prompt", reasoning="low")
+    _cerebras(without).generate("gpt-oss-120b", "the prompt")
+
+    request = with_reasoning.requests[0]
+    assert request["url"] == "https://cerebras.test/v1/chat/completions"
+    assert request["headers"]["Authorization"] == "Bearer k"
+    assert request["payload"] == {
+        "model": "gpt-oss-120b",
+        "messages": [{"role": "user", "content": "the prompt"}],
+        "reasoning_effort": "low",
+    }
+    assert "reasoning_effort" not in without.requests[0]["payload"]
+
+
+def test_cerebras_sends_its_own_larger_output_budget_only_for_medium_effort():
+    medium, low, none = (FakeSession(_groq_ok(REVIEW_JSON)) for _ in range(3))
+
+    _cerebras(medium).generate("gpt-oss-120b", "p", reasoning="medium")
+    _cerebras(low).generate("gpt-oss-120b", "p", reasoning="low")
+    _cerebras(none).generate("gpt-oss-120b", "p")
+
+    cerebras_medium_cap = CEREBRAS_MAX_COMPLETION_TOKENS["medium"]
+    assert medium.requests[0]["payload"]["max_completion_tokens"] == cerebras_medium_cap
+    assert cerebras_medium_cap > 5500  # bigger than Groq's cap
+    assert "max_completion_tokens" not in low.requests[0]["payload"]
+    assert "max_completion_tokens" not in none.requests[0]["payload"]
+
+
+# Cerebras' real response (captured from the API) when a request's actual usage exceeds its
+# TPM budget for the minute — unlike Groq's 413 preflight check on the requested cap,
+# confirmed live to be usage-based: a tiny prompt with a 29,000-token cap still succeeded.
+CEREBRAS_429_BODY = {
+    "message": "Tokens per minute limit exceeded - too many tokens processed.",
+    "type": "too_many_tokens_error",
+    "param": "quota",
+    "code": "token_quota_exceeded",
+}
+
+
+def test_cerebras_429_too_many_tokens_is_transient_not_permanent():
+    session = FakeSession(FakeResponse(429, CEREBRAS_429_BODY))
+
+    with pytest.raises(LlmTransientError, match="429"):
+        _cerebras(session).generate("gpt-oss-120b", "a very large prompt", "medium")
+
+
+# Cerebras' real response for a model id it doesn't serve.
+CEREBRAS_404_BODY = {
+    "message": "Model does not exist or you do not have access to it.",
+    "type": "not_found_error",
+    "param": "model",
+    "code": "model_not_found",
+}
+
+
+def test_cerebras_404_model_not_found_is_model_gone():
+    session = FakeSession(FakeResponse(404, CEREBRAS_404_BODY))
+
+    with pytest.raises(LlmModelNotFoundError):
+        _cerebras(session).generate("gpt-oss-999b-does-not-exist", "p")
+
+
+def test_cerebras_logs_finish_reason_and_usage_on_success(caplog):
+    body = _groq_ok(REVIEW_JSON)
+    body._body["usage"] = {"prompt_tokens": 10, "completion_tokens": 5}
+
+    with caplog.at_level("INFO"):
+        _cerebras(FakeSession(body)).generate("gpt-oss-120b", "p")
+
+    assert any(
+        "cerebras:gpt-oss-120b" in r.message and "usage=" in r.message for r in caplog.records
+    )
+
+
 # --- router ------------------------------------------------------------------------------
 
 
@@ -370,6 +470,28 @@ def test_mix_of_gone_and_transient_is_retryable(two_provider_tier):
 
     with pytest.raises(LlmTransientError):
         _review(_router({"gemini": gemini, "groq": groq}))
+
+
+def test_three_provider_fallback_reaches_cerebras_then_groq(monkeypatch):
+    """LLM_MODELS_HIGH's real shape has three entries, not two — confirms the router falls
+    through all three, in order, rather than something baked-in assuming exactly two."""
+    monkeypatch.setenv(
+        "LLM_MODELS_HIGH",
+        "gemini:gemini-3.5-flash:high,cerebras:gpt-oss-120b:medium,groq:openai/gpt-oss-120b:medium",
+    )
+    gemini = FakeClient({"gemini-3.5-flash": LlmTransientError("HTTP 503")})
+    cerebras = FakeClient({"gpt-oss-120b": LlmTransientError("HTTP 429")})
+    groq = FakeClient({"openai/gpt-oss-120b": REVIEW_JSON})
+
+    router = _router(
+        {"gemini": gemini, "cerebras": cerebras, "groq": groq},
+        remaining_time_ms=lambda: GEMINI_HIGH_REASONING_ATTEMPT_BUDGET_MS,
+    )
+    review = router.generate_review(pr_id="42", diff_text="+x", complexity=Complexity.HIGH)
+
+    assert review.model_used == "groq:openai/gpt-oss-120b:medium"
+    assert review.fell_back is True
+    assert cerebras.calls == [("gpt-oss-120b", "medium")]
 
 
 def test_deadline_stops_before_an_attempt_that_would_not_fit(two_provider_tier):
@@ -733,11 +855,14 @@ def test_enough_time_for_gemini_high_budget_lets_the_attempt_run(monkeypatch):
 
 
 def test_real_high_tier_order_leads_with_gemini_high_not_as_a_rare_fallback(monkeypatch):
-    """LLM_MODELS_HIGH's actual order: gemini:gemini-3.5-flash:high first,
-    groq:openai/gpt-oss-120b:medium as the fallback — the reverse of low/medium, which both
-    lead with Groq. With plenty of time, Gemini's high-reasoning pass runs on the very first
-    attempt (not reached only when Groq happens to fail); with too little time for even that
-    first attempt's 95s budget, the router stops before trying anything at all."""
+    """LLM_MODELS_HIGH leads with gemini:gemini-3.5-flash:high — the reverse of low/medium,
+    which both lead with Groq — with Cerebras and Groq as later fallbacks (see
+    test_three_provider_fallback_reaches_cerebras_then_groq for the full three-entry list).
+    Isolated here to a two-entry env var so this test focuses purely on Gemini-leads-not-
+    falls-back, without the Cerebras hop's own assertions in the way. With plenty of time,
+    Gemini's high-reasoning pass runs on the very first attempt (not reached only when Groq
+    happens to fail); with too little time for even that first attempt's 95s budget, the
+    router stops before trying anything at all."""
     monkeypatch.setenv(
         "LLM_MODELS_HIGH", "gemini:gemini-3.5-flash:high,groq:openai/gpt-oss-120b:medium"
     )

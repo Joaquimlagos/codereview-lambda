@@ -1,9 +1,9 @@
 # InvokeLLM Lambda's own least-privilege execution role (Principle II). Scope: CloudWatch
-# Logs, read access to exactly its own two secrets (the Gemini and Groq API keys, used to call
-# each provider's API directly — no separate routing service), and read-only access to the
-# artifacts bucket's prs/ prefix, where the diff it reviews lives (S3Storage.get_text in
-# invoke_llm/handler.py). It does not read index/: retrieved context arrives inline from
-# RetrieveContext, so this role never needs the RAG index.
+# Logs, read access to exactly its own three secrets (the Gemini, Groq, and Cerebras API
+# keys, used to call each provider's API directly — no separate routing service), and
+# read-only access to the artifacts bucket's prs/ prefix, where the diff it reviews lives
+# (S3Storage.get_text in invoke_llm/handler.py). It does not read index/: retrieved context
+# arrives inline from RetrieveContext, so this role never needs the RAG index.
 
 data "aws_iam_policy_document" "invoke_llm_assume_role" {
   statement {
@@ -70,6 +70,27 @@ resource "aws_iam_role_policy" "invoke_llm_read_groq_secret" {
   policy = data.aws_iam_policy_document.invoke_llm_read_groq_secret.json
 }
 
+# Same pattern for the Cerebras API key: its ARN is published by codereview-infra's
+# secrets.tf at /codereview/secrets/cerebras-api-key-arn (already published; the secret was
+# created there ahead of this change), and the policy covers exactly that one secret — only
+# InvokeLLM gets it, matching the Gemini/Groq secrets above.
+data "aws_ssm_parameter" "cerebras_api_key_arn" {
+  name = "/${var.project_name}/secrets/cerebras-api-key-arn"
+}
+
+data "aws_iam_policy_document" "invoke_llm_read_cerebras_secret" {
+  statement {
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [data.aws_ssm_parameter.cerebras_api_key_arn.value]
+  }
+}
+
+resource "aws_iam_role_policy" "invoke_llm_read_cerebras_secret" {
+  name   = "${var.project_name}-invoke-llm-read-cerebras-secret"
+  role   = aws_iam_role.invoke_llm.id
+  policy = data.aws_iam_policy_document.invoke_llm_read_cerebras_secret.json
+}
+
 data "aws_iam_policy_document" "invoke_llm_read_diffs" {
   statement {
     actions   = ["s3:GetObject"]
@@ -99,16 +120,19 @@ resource "aws_lambda_function" "invoke_llm" {
   role          = aws_iam_role.invoke_llm.arn
   handler       = "invoke_llm.handler.handler"
   runtime       = "python3.14"
-  # 180s: most attempts allow 5s to connect + 45s to read (50s budget), but the high tier's
-  # Gemini entry (gemini:gemini-3.5-flash:high, tried first — see LLM_MODELS_HIGH) needs far
+  # 230s: LLM_MODELS_HIGH now has three entries (gemini:high, cerebras:medium, groq:medium —
+  # added so a large diff that exhausts Gemini's timeout AND Groq's 8K TPM ceiling still has
+  # a real fallback, see research.md's "Cerebras as a third fallback provider"). Most
+  # attempts allow 5s to connect + 45s to read (50s budget); Gemini's high entry needs far
   # more — measured 63s on a realistic prompt, with real run-to-run variance — so it gets its
-  # own 5s + 90s budget (95s; llm_router.py's GEMINI_HIGH_REASONING_*). Worst case for
-  # LLM_MODELS_HIGH is Gemini's high attempt (95s) then Groq's medium fallback (50s) = 145s,
-  # plus cold start and the secret fetch; 180s leaves real margin instead of the ~0s the
-  # previous 150s left for exactly that path. The router still checks the remaining time
-  # before every attempt (against that attempt's own budget) and stops with LlmTransientError
-  # rather than being cut off by Lambda's own timeout.
-  timeout = 180
+  # own 5s + 90s budget (95s; llm_router.py's GEMINI_HIGH_REASONING_*). Worst case is all
+  # three attempts failing: Gemini's high attempt (95s) + Cerebras' medium fallback (50s) +
+  # Groq's medium fallback (50s) = 195s raw, plus cold start and the secret fetch; 230s keeps
+  # the same ~35s margin the previous 180s gave the old (145s raw) two-entry worst case,
+  # instead of shrinking it as a third attempt was added. The router still checks the
+  # remaining time before every attempt (against that attempt's own budget) and stops with
+  # LlmTransientError rather than being cut off by Lambda's own timeout.
+  timeout = 230
   # 256 MB: at 128 MB a cold start alone used ~104 MB (boto3 + pydantic), and Lambda
   # scales CPU with memory, so 128 MB also made cold starts slow.
   memory_size = 256
@@ -118,8 +142,13 @@ resource "aws_lambda_function" "invoke_llm" {
 
   # The API bases and the three per-tier model lists are static, non-secret config: safe as
   # plain Lambda env vars. Each LLM_MODELS_* is a comma-separated fallback list of
-  # provider:model[:reasoning] entries, in order of preference; every tier mixes both
-  # providers (research.md, "Multi-provider model fallback", has the measurements).
+  # provider:model[:reasoning] entries, in order of preference; every tier mixes all three
+  # providers (research.md, "Multi-provider model fallback" and "Cerebras as a third fallback
+  # provider", has the measurements). LOW/MEDIUM lead with Groq, then Cerebras, then Gemini —
+  # Cerebras keeps Groq's own reasoning effort for that tier, since it serves the identical
+  # gpt-oss-120b model. HIGH leads with Gemini's deeper reasoning pass, then Cerebras at
+  # medium (its 30K TPM ceiling covers a large diff Groq's 8K can't), then Groq's medium as
+  # the last resort.
   # The API keys are deliberately NOT set here: no secret value ever lands in Terraform
   # state. The *_SECRET_ARN values are only the secrets' ARNs (identifiers, not values),
   # taken from the same SSM-published data sources this role's GetSecretValue policies are
@@ -127,13 +156,15 @@ resource "aws_lambda_function" "invoke_llm" {
   # (integrations/secrets.py), so the role needs no ssm:GetParameter at all.
   environment {
     variables = {
-      GEMINI_API_BASE           = "https://generativelanguage.googleapis.com/v1beta"
-      GEMINI_API_KEY_SECRET_ARN = data.aws_ssm_parameter.gemini_api_key_arn.value
-      GROQ_API_BASE             = "https://api.groq.com/openai/v1"
-      GROQ_API_KEY_SECRET_ARN   = data.aws_ssm_parameter.groq_api_key_arn.value
-      LLM_MODELS_LOW            = "groq:openai/gpt-oss-120b:low,gemini:gemini-3.5-flash:low"
-      LLM_MODELS_MEDIUM         = "groq:openai/gpt-oss-120b:medium,gemini:gemini-3.5-flash:low"
-      LLM_MODELS_HIGH           = "gemini:gemini-3.5-flash:high,groq:openai/gpt-oss-120b:medium"
+      GEMINI_API_BASE             = "https://generativelanguage.googleapis.com/v1beta"
+      GEMINI_API_KEY_SECRET_ARN   = data.aws_ssm_parameter.gemini_api_key_arn.value
+      GROQ_API_BASE               = "https://api.groq.com/openai/v1"
+      GROQ_API_KEY_SECRET_ARN     = data.aws_ssm_parameter.groq_api_key_arn.value
+      CEREBRAS_API_BASE           = "https://api.cerebras.ai/v1"
+      CEREBRAS_API_KEY_SECRET_ARN = data.aws_ssm_parameter.cerebras_api_key_arn.value
+      LLM_MODELS_LOW              = "groq:openai/gpt-oss-120b:low,cerebras:gpt-oss-120b:low,gemini:gemini-3.5-flash:low"
+      LLM_MODELS_MEDIUM           = "groq:openai/gpt-oss-120b:medium,cerebras:gpt-oss-120b:medium,gemini:gemini-3.5-flash:low"
+      LLM_MODELS_HIGH             = "gemini:gemini-3.5-flash:high,cerebras:gpt-oss-120b:medium,groq:openai/gpt-oss-120b:medium"
     }
   }
 

@@ -3,8 +3,13 @@
 Each complexity tier resolves to an ordered fallback list from LLM_MODELS_LOW/MEDIUM/HIGH.
 Every entry is `provider:model[:reasoning]` — e.g. `groq:openai/gpt-oss-120b:low` or
 `gemini:gemini-3.5-flash:low` — so no model name is hardcoded in code. One client per
-provider (GeminiClient, GroqClient) calls that provider's HTTP API directly; there is no
-routing service in front of them. MultiProviderLlmRouter tries the entries in order, falling
+provider (GeminiClient, GroqClient, CerebrasClient) calls that provider's HTTP API directly;
+there is no routing service in front of them. Groq and Cerebras both serve the same
+OpenAI-compatible `gpt-oss-120b` model, so GroqClient and CerebrasClient share their request/
+response handling via `_openai_compatible_generate` and differ only in base URL, API key, and
+per-effort output cap — Cerebras' free tier has a much larger 30K TPM ceiling than Groq's 8K,
+so it gets a bigger `max_completion_tokens` at `medium` effort (see
+`CEREBRAS_MAX_COMPLETION_TOKENS`). MultiProviderLlmRouter tries the entries in order, falling
 back across models and providers, and stops early when the Lambda's remaining time can't fit
 another attempt (per-attempt budget, since Gemini's "high" reasoning needs much longer than
 everything else — see `_attempt_budget_ms`). See research.md's "Multi-provider model
@@ -51,7 +56,7 @@ GEMINI_HIGH_REASONING_ATTEMPT_BUDGET_MS = (
     CONNECT_TIMEOUT_SECONDS + GEMINI_HIGH_REASONING_READ_TIMEOUT_SECONDS
 ) * 1000
 
-PROVIDERS = ("gemini", "groq")
+PROVIDERS = ("gemini", "groq", "cerebras")
 
 # Path substrings (case-insensitive) that trigger the security checklist in build_prompt.
 # Matched against every path on the incoming event, not only the ones in the diff, so a
@@ -325,6 +330,70 @@ class GeminiClient(ModelClient):
 # fallback".
 GROQ_MAX_COMPLETION_TOKENS: dict[str, int] = {"medium": 5500}
 
+# Cerebras serves the same gpt-oss-120b model with a much larger free-tier ceiling (30,000
+# uncached TPM vs. Groq's 8,000 — see research.md, "Cerebras as a third fallback provider"),
+# and — confirmed with a real test call — enforces it against *actual* usage, not a preflight
+# check on the requested cap the way Groq does (a tiny prompt with
+# max_completion_tokens=29000 still succeeded, using only the tokens it actually generated).
+# 12,000 is sized against the largest real prompt measured so far: PR #8's diff (6,531 tokens)
+# plus the rubric (256) and base instructions (269) is ~7,056 prompt tokens; 7,056 + 12,000 =
+# 19,056, comfortably under the 30,000 ceiling with ~11,000 tokens of margin for an even
+# larger diff or a longer reasoning pass, while still being more than double Groq's 5,500 cap.
+# Low effort gets no explicit cap, mirroring Groq's own low-effort entries.
+CEREBRAS_MAX_COMPLETION_TOKENS: dict[str, int] = {"medium": 12000}
+
+
+def _openai_compatible_generate(
+    session,
+    api_base: str,
+    api_key: str,
+    label: str,
+    model: str,
+    prompt: str,
+    reasoning: str | None,
+    max_completion_tokens_by_effort: dict[str, int],
+) -> str:
+    """Shared request/response handling for Groq and Cerebras: both serve an OpenAI-compatible
+    `chat/completions` endpoint for the same gpt-oss family of models, with identical request
+    shape, error shape, and truncation signal (`finish_reason: "length"` with empty content).
+    They differ only in base URL, API key, and `max_completion_tokens_by_effort` — passed in
+    by each client rather than duplicating this ~30 lines of parsing/error-classification logic
+    per provider."""
+    payload: dict = {"model": model, "messages": [{"role": "user", "content": prompt}]}
+    if reasoning:
+        # Both providers' reasoning control for models that support it (e.g. gpt-oss:
+        # low/medium/high); omitted otherwise, since models without it reject the parameter.
+        payload["reasoning_effort"] = reasoning
+        if reasoning in max_completion_tokens_by_effort:
+            payload["max_completion_tokens"] = max_completion_tokens_by_effort[reasoning]
+    headers = {"Authorization": f"Bearer {api_key}"}
+    url = f"{api_base}/chat/completions"
+    data = _post_json(session, url, payload, headers, label)
+
+    choices = data.get("choices") or []
+    if not choices:
+        raise LlmRouterError(f"{label} returned no choices")
+    # gpt-oss returns its reasoning in a separate `message.reasoning` field, so `content`
+    # holds only the answer.
+    text = (choices[0].get("message") or {}).get("content") or ""
+    if not text.strip():
+        finish_reason = choices[0].get("finish_reason")
+        if finish_reason == "length":
+            raise LlmOutputTruncatedError(
+                f"{label} hit its output token limit before answering (finish_reason "
+                f"length, usage {data.get('usage')})"
+            )
+        raise LlmRouterError(
+            f"{label} returned an empty response (finish_reason {finish_reason})"
+        )
+    logger.info(
+        "%s answered: finish_reason=%s usage=%s",
+        label,
+        choices[0].get("finish_reason"),
+        data.get("usage"),
+    )
+    return text
+
 
 class GroqClient(ModelClient):
     """Groq's OpenAI-compatible `chat/completions` endpoint."""
@@ -337,41 +406,45 @@ class GroqClient(ModelClient):
         self._session = session or requests.Session()
 
     def generate(self, model: str, prompt: str, reasoning: str | None = None) -> str:
-        label = f"groq:{model}"
-        payload: dict = {"model": model, "messages": [{"role": "user", "content": prompt}]}
-        if reasoning:
-            # Groq's reasoning control for models that support it (e.g. gpt-oss: low/medium/
-            # high); omitted otherwise, since models without it reject the parameter.
-            payload["reasoning_effort"] = reasoning
-            if reasoning in GROQ_MAX_COMPLETION_TOKENS:
-                payload["max_completion_tokens"] = GROQ_MAX_COMPLETION_TOKENS[reasoning]
-        headers = {"Authorization": f"Bearer {self._api_key}"}
-        url = f"{self._api_base}/chat/completions"
-        data = _post_json(self._session, url, payload, headers, label)
-
-        choices = data.get("choices") or []
-        if not choices:
-            raise LlmRouterError(f"{label} returned no choices")
-        # gpt-oss returns its reasoning in a separate `message.reasoning` field, so `content`
-        # holds only the answer.
-        text = (choices[0].get("message") or {}).get("content") or ""
-        if not text.strip():
-            finish_reason = choices[0].get("finish_reason")
-            if finish_reason == "length":
-                raise LlmOutputTruncatedError(
-                    f"{label} hit its output token limit before answering (finish_reason "
-                    f"length, usage {data.get('usage')})"
-                )
-            raise LlmRouterError(
-                f"{label} returned an empty response (finish_reason {finish_reason})"
-            )
-        logger.info(
-            "%s answered: finish_reason=%s usage=%s",
-            label,
-            choices[0].get("finish_reason"),
-            data.get("usage"),
+        return _openai_compatible_generate(
+            self._session,
+            self._api_base,
+            self._api_key,
+            f"groq:{model}",
+            model,
+            prompt,
+            reasoning,
+            GROQ_MAX_COMPLETION_TOKENS,
         )
-        return text
+
+
+class CerebrasClient(ModelClient):
+    """Cerebras' OpenAI-compatible `chat/completions` endpoint — same gpt-oss-120b model as
+    Groq, with a much larger free-tier TPM ceiling (research.md, "Cerebras as a third fallback
+    provider"). Confirmed via a real test call: reasoning_effort (low/medium/high) works the
+    same as Groq's, and its error shapes (429 `token_quota_exceeded` for too many tokens, 404
+    `model_not_found` for an unknown model) both already fall into the router's existing
+    transient/model-gone classification — no special-casing needed beyond a different base
+    URL, key, and output cap."""
+
+    def __init__(self, api_base: str, api_key: str, session=None):
+        import requests
+
+        self._api_base = api_base
+        self._api_key = api_key
+        self._session = session or requests.Session()
+
+    def generate(self, model: str, prompt: str, reasoning: str | None = None) -> str:
+        return _openai_compatible_generate(
+            self._session,
+            self._api_base,
+            self._api_key,
+            f"cerebras:{model}",
+            model,
+            prompt,
+            reasoning,
+            CEREBRAS_MAX_COMPLETION_TOKENS,
+        )
 
 
 def _touches_security_sensitive_path(paths: list[str] | None) -> bool:

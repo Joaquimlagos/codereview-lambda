@@ -1,6 +1,6 @@
 """InvokeLLM Lambda: LLM review generation, model tier from RouteModel (FR-006).
 
-Each tier's fallback list can mix providers (Gemini and Groq); see
+Each tier's fallback list can mix providers (Gemini, Groq, and Cerebras); see
 integrations/llm_router.py.
 
 Accepts an optional retrieved context (present only when RetrieveContext ran) so the generated
@@ -9,7 +9,13 @@ review reflects both diff and context when available (User Story 3).
 
 from contracts.models import Complexity, ContextChunk, PullRequestEvent
 from integrations.config import require_env
-from integrations.llm_router import GeminiClient, GroqClient, LlmRouter, MultiProviderLlmRouter
+from integrations.llm_router import (
+    CerebrasClient,
+    GeminiClient,
+    GroqClient,
+    LlmRouter,
+    MultiProviderLlmRouter,
+)
 from integrations.secrets import resolve_api_key
 from integrations.storage import S3Storage, Storage
 
@@ -19,6 +25,8 @@ GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
 GEMINI_API_KEY_SECRET_ARN_ENV = "GEMINI_API_KEY_SECRET_ARN"
 GROQ_API_KEY_ENV = "GROQ_API_KEY"
 GROQ_API_KEY_SECRET_ARN_ENV = "GROQ_API_KEY_SECRET_ARN"
+CEREBRAS_API_KEY_ENV = "CEREBRAS_API_KEY"
+CEREBRAS_API_KEY_SECRET_ARN_ENV = "CEREBRAS_API_KEY_SECRET_ARN"
 
 # The top-level PullRequestEvent fields present on the accumulated Step Functions event —
 # camelCase, matching what codereview-app actually publishes (contracts/models.py's
@@ -49,6 +57,10 @@ def _default_llm_router(remaining_time_ms=None) -> LlmRouter:
             "groq": lambda: GroqClient(
                 api_base=require_env("GROQ_API_BASE"),
                 api_key=resolve_api_key(GROQ_API_KEY_ENV, GROQ_API_KEY_SECRET_ARN_ENV),
+            ),
+            "cerebras": lambda: CerebrasClient(
+                api_base=require_env("CEREBRAS_API_BASE"),
+                api_key=resolve_api_key(CEREBRAS_API_KEY_ENV, CEREBRAS_API_KEY_SECRET_ARN_ENV),
             ),
         },
         remaining_time_ms=remaining_time_ms,

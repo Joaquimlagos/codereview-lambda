@@ -330,6 +330,11 @@ in `LLM_MODELS_*`, and Gemma is out. Kept for the measurements and reasoning tha
   | medium | `groq:openai/gpt-oss-120b:medium`, `gemini:gemini-3.5-flash:low` |
   | high | `gemini:gemini-3.5-flash:high`, `groq:openai/gpt-oss-120b:medium` (changed after this decision was first written — see "High-tier reasoning: why Gemini, not Groq" below for why Gemini leads rather than falls back) |
 
+  *Superseded by "Cerebras as a third fallback provider" below: every tier gained a third
+  entry, Cerebras (same `gpt-oss-120b` model as Groq, much larger free-tier TPM ceiling). The
+  table above is kept for the two-provider measurements it documents; the current lists are in
+  that section.*
+
   Groq is called through its OpenAI-compatible `chat/completions` endpoint (`GroqClient`);
   Gemini through `generateContent` (`GeminiClient`). The optional third field sends the
   provider's reasoning control (`generationConfig.thinkingConfig.thinkingLevel` on Gemini,
@@ -431,10 +436,10 @@ in `LLM_MODELS_*`, and Gemma is out. Kept for the measurements and reasoning tha
   prompt + reasoning + answer on medium-to-large PRs (#8's 6,531-token diff alone leaves under
   1,500 tokens for reasoning and answer combined, before the checklist or a rubric-sized
   addition is even counted). `LlmOutputTruncatedError`'s existing move-to-next-model fallback
-  already covers this for now; the structural fix is a third provider with a larger quota
-  (Cerebras, 30K TPM on the same `gpt-oss-120b` model — already proposed, not yet implemented,
-  in "High-tier reasoning: why Gemini, not Groq" above), not a smaller, prompt-dependent cap on
-  the provider that's already too tight.
+  already covers this for now; the structural fix — a third provider with a larger quota — is
+  implemented in "Cerebras as a third fallback provider" below (30K TPM on the same
+  `gpt-oss-120b` model), not a smaller, prompt-dependent cap on the provider that's already
+  too tight.
 - **Error handling**: HTTP 404, and Groq's `model_not_found`/`model_decommissioned` codes
   (which Groq can send with HTTP 400), raise `LlmModelNotFoundError`, and the router moves to
   the next entry: providers remove free-tier models without notice. If every entry is gone,
@@ -462,9 +467,9 @@ in `LLM_MODELS_*`, and Gemma is out. Kept for the measurements and reasoning tha
   per-model detail.
 - **Secrets**: the Groq key follows the same pattern as the others: codereview-infra
   publishes its ARN at `/codereview/secrets/groq-api-key-arn`, Terraform sets it as
-  `GROQ_API_KEY_SECRET_ARN`, and the InvokeLLM role may read only that secret (plus Gemini's).
-  Each provider's client, and its key, is only created when one of its models is actually
-  tried.
+  `GROQ_API_KEY_SECRET_ARN`, and the InvokeLLM role may read only that secret (plus Gemini's
+  and, since "Cerebras as a third fallback provider" below, Cerebras'). Each provider's
+  client, and its key, is only created when one of its models is actually tried.
 - **Constitution**: Principle III used to require "three Gemini free-tier models" for
   generation. It was amended (1.1.1 → 1.2.0, MINOR) to "three complexity tiers, each served
   by free-tier models, with fallback across providers", without naming providers or models,
@@ -592,13 +597,20 @@ in `LLM_MODELS_*`, and Gemma is out. Kept for the measurements and reasoning tha
 
 ## High-tier reasoning: why Gemini, not Groq
 
-- **Decision**: `LLM_MODELS_HIGH` is `gemini:gemini-3.5-flash:high,groq:openai/gpt-oss-120b:medium`
-  — Gemini `:high` **leads**, Groq `:medium` is the **fallback**, the reverse of low/medium's
-  order (both lead with Groq). Gemini's client-level read timeout, and the router's
-  pre-attempt deadline budget, are both Gemini-high-specific overrides
+*Note: `LLM_MODELS_HIGH` gained a third entry, Cerebras, after this decision was written — see
+"Cerebras as a third fallback provider" below. The Gemini-leads-Groq-falls-back order and the
+Gemini-high-specific timeout/budget overrides described here are unchanged; only the Lambda
+timeout math at the end of this section is superseded (three entries, not two — see below).*
+
+- **Decision**: `LLM_MODELS_HIGH` is
+  `gemini:gemini-3.5-flash:high,cerebras:gpt-oss-120b:medium,groq:openai/gpt-oss-120b:medium`
+  — Gemini `:high` **leads**, Cerebras `:medium` and Groq `:medium` are **fallbacks**, the
+  reverse of low/medium's order (both lead with Groq). Gemini's client-level read timeout, and
+  the router's pre-attempt deadline budget, are both Gemini-high-specific overrides
   (`GEMINI_HIGH_REASONING_READ_TIMEOUT_SECONDS = 90`, `GEMINI_HIGH_REASONING_ATTEMPT_BUDGET_MS`),
   not a change to the shared defaults every other entry still uses. `invoke-llm`'s Lambda
-  timeout goes from 150 s to 180 s to keep real margin for the new worst case.
+  timeout goes from 150 s to 230 s (180 s in the two-entry version of this decision, then
+  230 s once Cerebras was added — see below) to keep real margin for the new worst case.
 - **Why Gemini leads instead of falling back**: the first version of this decision put Groq
   `:medium` first and Gemini `:high` second, matching low/medium's pattern. In practice, Groq
   `:medium` succeeds on the first attempt most of the time (confirmed across PR #3, #5, #7 —
@@ -638,24 +650,116 @@ in `LLM_MODELS_*`, and Gemma is out. Kept for the measurements and reasoning tha
   `reasoning == "high"` (45 s everywhere else), and the router's pre-attempt deadline check
   uses a matching 95 s budget for that one entry (`_attempt_budget_ms`), so Lambda's own
   timeout doesn't cut it off mid-request either.
-- **Lambda timeout raised 150 s → 180 s**: worst case for the high tier is Gemini's `:high`
-  attempt (first) failing after its full 95 s budget, then Groq's `:medium` fallback (second)
-  using its full 50 s — 145 s total either way the list is ordered, since the sum of the two
-  attempts' budgets doesn't depend on which runs first. 150 s left ~0 s of margin for that
-  path; 180 s leaves real headroom, and the deadline check before the second attempt (Groq's
-  50 s budget) is comfortably covered by whatever remains after Gemini's 95 s. This only
-  changes `invoke-llm`'s own Lambda timeout, not `codereview-infra`'s Step Functions `Retry`
-  (still `MaxAttempts: 1`, `IntervalSeconds: 30`), so the worst-case full failure is roughly
-  2 × 180 s + 30 s ≈ 6.5 minutes (up from ~5.5 minutes at 150 s) — still fine for a
-  non-blocking advisory check.
+- **Lambda timeout, superseded — see "Cerebras as a third fallback provider" for the current
+  230 s figure**: this section originally raised the timeout 150 s → 180 s for a two-entry
+  worst case (Gemini's 95 s budget + Groq's 50 s budget = 145 s raw + 35 s margin). Adding
+  Cerebras as a third entry changed the raw worst case to 195 s (see below); the 180 s figure
+  is kept here only as the historical basis for that decision.
 - **Alternatives considered**: Groq `:medium` first, Gemini `:high` as fallback (the initial
   version of this decision — superseded: it left the deeper pass almost never reached, since
   Groq `:medium` rarely fails); a third, higher-TPM free-tier provider for the high tier
   instead of retiming Gemini (e.g. Cerebras, 30K TPM on the same `gpt-oss-120b` model —
-  proposed separately as a fix for fallback-exhaustion on oversized diffs, not implemented
-  here); a flat, larger read timeout for every entry regardless of reasoning level (rejected —
-  needlessly extends the budget check for the low/medium tiers and every other high-tier
-  entry, none of which need anywhere near 90 s in practice).
+  proposed here, implemented in "Cerebras as a third fallback provider" below); a flat, larger
+  read timeout for every entry regardless of reasoning level (rejected — needlessly extends
+  the budget check for the low/medium tiers and every other high-tier entry, none of which
+  need anywhere near 90 s in practice).
+
+## Cerebras as a third fallback provider
+
+- **Decision**: Every tier's fallback list gained a third entry, Cerebras, serving the same
+  `gpt-oss-120b` model Groq does. LOW and MEDIUM lead with Groq, then Cerebras, then Gemini
+  (Cerebras keeps Groq's own reasoning effort for that tier, since it's the identical model):
+  `LLM_MODELS_LOW = groq:openai/gpt-oss-120b:low,cerebras:gpt-oss-120b:low,gemini:gemini-3.5-flash:low`,
+  `LLM_MODELS_MEDIUM = groq:openai/gpt-oss-120b:medium,cerebras:gpt-oss-120b:medium,gemini:gemini-3.5-flash:low`.
+  HIGH keeps Gemini's deeper pass leading, with Cerebras inserted between Gemini and Groq:
+  `LLM_MODELS_HIGH = gemini:gemini-3.5-flash:high,cerebras:gpt-oss-120b:medium,groq:openai/gpt-oss-120b:medium`.
+- **Why**: PR #8 (11 files, +686 lines) exposed a real gap once the size clause (below)
+  started routing large diffs to the high tier: Groq's 8,000 TPM ceiling rejects PR #8's
+  ~7,056-token prompt (diff + rubric + base instructions) outright with a 413, and Gemini
+  `:high`'s 90 s read timeout is also at risk on a diff this size (measured 84.7 s on a much
+  smaller ~600-token diff; the real PR #8 run timed out entirely). With only those two
+  entries, a high-tier PR whose diff is already large could fail both, and post no review at
+  all — worse than the old medium-tier behavior (an empty-but-posted review). Cerebras serves
+  the identical `gpt-oss-120b` model with a **30,000 TPM free-tier ceiling** (vs. Groq's
+  8,000), so it covers exactly the gap: a diff too large for Groq still fits comfortably under
+  Cerebras' limit.
+- **Official free-tier limits, with source**: Cerebras' `gpt-oss-120b` Free Trial tier is 5
+  RPM, 30,000 TPM (uncached), 90,000 TPM (total, cached+uncached), 1,000,000 tokens/hour, and
+  1,000,000 tokens/day (`https://inference-docs.cerebras.ai/support/rate-limits`, confirmed
+  directly, not from a third-party summary). The OpenAI-compatible endpoint is documented at
+  `https://api.cerebras.ai/v1` (`https://inference-docs.cerebras.ai/resources/openai`). A
+  single review call is always uncached (a fresh diff every time), so the 30,000 TPM figure —
+  not the larger 90,000 total — is the relevant ceiling to size against.
+- **Confirmed with a real test call before writing any client code**: `reasoning_effort`
+  (`low`/`medium`/`high`) is accepted the same way Groq's is, with `reasoning_tokens` scaling
+  as expected (8/51/162 tokens at low/medium/high on an identical tiny prompt). Two error
+  shapes were captured live:
+  - **Too many tokens**: HTTP `429` with `{"code": "token_quota_exceeded", "type":
+    "too_many_tokens_error", ...}` — a different status and shape than Groq's `413` with
+    `code: "rate_limit_exceeded"`, but `429` is already in the router's
+    `_TRANSIENT_STATUS_CODES`, so it needed no new handling.
+  - **Unknown model**: HTTP `404` with `{"code": "model_not_found", ...}` — the same code
+    Groq uses, and status `404` alone already triggers the router's model-gone classification
+    (it doesn't need to read the body for that case), so this needed no new handling either.
+  - Net result: `CerebrasClient` reuses Groq's exact request/response/error-classification
+    logic, refactored into a shared `_openai_compatible_generate` helper — the two providers
+    differ only in base URL, API key, and output cap.
+- **A real, and consequential, difference: usage-based vs. preflight limiting.** Groq
+  rejects a request *before* it runs, based on `prompt_tokens + max_completion_tokens`
+  regardless of what's actually used — this is why Groq's cap has to be sized tightly (see
+  "Multi-provider model fallback"'s note on the medium-effort empty-content failure). Cerebras
+  was tested directly against this: a tiny ~82-token prompt with `max_completion_tokens` set
+  to 25,000 and then 29,000 both succeeded, using only the tokens actually generated (44 and
+  59 completion tokens respectively) — no preflight rejection at all. This means Cerebras'
+  cap can be sized generously without the Groq-style risk of an oversized cap causing an
+  instant rejection on an otherwise-small prompt.
+- **Output cap: 12,000 at medium effort, more than double Groq's 5,500 — the math against
+  PR #8's real prompt**: PR #8's diff measures 6,531 tokens (gpt-oss tokenizer); adding the
+  rubric (256 tokens) and base instructions (269 tokens) — PR #8 doesn't touch an
+  auth-sensitive path, so no security checklist — gives a real prompt of **~7,056 tokens**.
+  With `CEREBRAS_MAX_COMPLETION_TOKENS["medium"] = 12,000`, the worst case (the full cap
+  actually used) is 7,056 + 12,000 = **19,056 tokens**, comfortably under the 30,000 TPM
+  ceiling with **~10,944 tokens of margin** — room for an even larger diff, or a longer
+  reasoning pass, before hitting the limit. 12,000 also gives real headroom for both
+  reasoning and the answer itself, rather than the tight fit Groq's 5,500 requires. Low effort
+  gets no explicit cap, mirroring Groq's own low-effort entries (which stayed well under the
+  default without one).
+- **Reasoning-effort assignment: Cerebras mirrors Groq's effort for that tier, not a fixed
+  level.** Since both serve the identical model, the same effort label should carry the same
+  meaning on either provider — `low`/`low` for the low tier, `medium`/`medium` for medium,
+  `medium` (not `high`) for the high tier, matching Groq's own entry there. `high` effort was
+  not tried on Cerebras for the high tier: Groq `:high` was already measured to fail
+  (exhausts its output budget on reasoning alone, see "High-tier reasoning: why Gemini, not
+  Groq"), and nothing about Cerebras' test results suggested a different outcome was likely
+  enough to justify a live test purely to find out before this round shipped.
+- **Lambda timeout raised 180 s → 230 s**: with three entries, the worst case is all three
+  failing: Gemini's `:high` attempt (95 s budget) + Cerebras' `:medium` fallback (50 s
+  budget, the shared default — Cerebras isn't given a Gemini-style override) + Groq's
+  `:medium` fallback (50 s budget) = **195 s raw**, regardless of order (the sum of the three
+  budgets doesn't depend on which runs first). The two-entry version of this decision used a
+  ~35 s margin over its 145 s raw worst case (150 s → 180 s); applying the same margin here
+  (195 s + 35 s ≈ 230 s) keeps that margin instead of letting it shrink as a third attempt was
+  added. This only changes `invoke-llm`'s own Lambda timeout, not `codereview-infra`'s Step
+  Functions `Retry` (still `MaxAttempts: 1`, `IntervalSeconds: 30`), so the worst-case full
+  failure is roughly 2 × 230 s + 30 s ≈ 8.2 minutes (up from ~6.5 minutes at 180 s) — still
+  fine for a non-blocking advisory check.
+- **IAM**: `invoke_llm`'s execution role gets a third `secretsmanager:GetSecretValue`
+  statement, scoped to exactly the Cerebras secret's ARN (`iam_invoke_llm.tf`), matching the
+  Gemini/Groq pattern — no other Lambda's role gets this permission. The secret
+  (`codereview/cerebras-api-key`) and its SSM-published ARN
+  (`/codereview/secrets/cerebras-api-key-arn`) were created in `codereview-infra`, following
+  the same naming convention as the Gemini/Groq secrets; this repo only reads the
+  already-published ARN, the same way it already does for the other two.
+- **Alternatives considered**: A dynamic, prompt-size-dependent cap for Cerebras (rejected for
+  the same reason it was rejected for Groq in "Multi-provider model fallback" — Cerebras isn't
+  preflight-limited the way Groq is, so this problem doesn't actually apply here, but a fixed
+  cap is still simpler and equally safe given the margin above); giving Cerebras `high` effort
+  in the high tier instead of `medium` (rejected — no evidence it would behave differently
+  from Groq `:high`'s measured failure, and testing it live wasn't worth the API calls purely
+  to rule out a low-probability win); replacing Groq with Cerebras entirely instead of adding
+  it as a third entry (rejected — Groq's `low`/`medium` first attempts are proven reliable in
+  production, and dropping a working provider to add a new one loses redundancy rather than
+  gaining it).
 
 ## Complexity criteria: an explicit size clause
 
@@ -699,12 +803,12 @@ in `LLM_MODELS_*`, and Gemma is out. Kept for the measurements and reasoning tha
   Functions retry. For comparison, PR #3's real `:high` run (a much smaller ~600-token diff)
   completed in 84.7s, comfortably inside the same 90s timeout — so large diffs are the
   specific case where Gemini `:high` risks timing out, not a general problem with the model.
-  Net: for a high-tier PR whose diff is already large, **both** entries in `LLM_MODELS_HIGH`
-  are now plausibly unable to complete, and the failure mode is worse than before (nothing
-  posted, vs. an empty review). This is an open problem, not yet fixed — the planned next step
-  is a third, higher-TPM free-tier provider (Cerebras, 30K TPM on the same `gpt-oss-120b`
-  model) as a second fallback behind Gemini `:high` and Groq `:medium`, tracked as follow-up
-  work rather than blocking this round's rubric/checklist/logging changes.
+  Net: for a high-tier PR whose diff is already large, **both** entries in the then-two-entry
+  `LLM_MODELS_HIGH` were plausibly unable to complete, and the failure mode was worse than
+  before (nothing posted, vs. an empty review). **Fixed in "Cerebras as a third fallback
+  provider" below**: Cerebras' 30,000 TPM ceiling comfortably covers PR #8's ~7,056-token
+  prompt where Groq's 8,000 TPM couldn't, giving the high tier a real fallback for exactly
+  this case instead of exhausting both entries at once.
 
 ## Per-call observability
 
