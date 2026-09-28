@@ -28,7 +28,7 @@ works.
 index script: Python 3.12 (`actions/setup-python` in `index-codebase.yml`).
 
 **Primary Dependencies**: lambda: `pydantic`, `requests` (unchanged; no new dependency).
-App script: standard library + `tree-sitter==0.26.0`, `tree-sitter-java==0.23.5`, pinned
+App script: standard library + `tree-sitter==0.25.2`, `tree-sitter-java==0.23.5`, pinned
 in `scripts/requirements-index.txt` (approved exception to the stdlib-only rule).
 
 **Storage**: S3 `codereview-artifacts`, key `index/develop/index.json` (versioned bucket).

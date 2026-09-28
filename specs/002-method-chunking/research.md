@@ -8,7 +8,7 @@ cannot be settled by reading documentation.
 
 ## R1. Java parser and chunk counts
 
-- **Decision**: `tree-sitter==0.26.0` + `tree-sitter-java==0.23.5`, pinned, installed in
+- **Decision**: `tree-sitter==0.25.2` + `tree-sitter-java==0.23.5`, pinned, installed in
   `index-codebase.yml` with `pip install` (approved). Chunking walks
   `class_declaration`, `record_declaration`, `interface_declaration` and `enum_declaration`
   nodes, and chunks `method_declaration`, `constructor_declaration` and
@@ -42,9 +42,26 @@ cannot be settled by reading documentation.
   | **Total** | **59** | ~50 expected (34 + 3 + ~13) |
 
   The one-method difference fits a slightly different trivial rule, or a method removed
-  since then. It is too small to matter for sizing. **FR-003's reference is this rule**,
-  plus the counts the dry run (T032) prints on `develop`, recorded here when it runs. The
-  feasibility sizes (largest ~680 tokens, 9.4× batch speed-up) remain valid for planning.
+  since then. It is too small to matter for sizing.
+- **FR-003's reference: the dry run (T032)**, `python scripts/build_index.py --dry-run` on
+  codereview-app `develop@88801e4` with the implemented chunker:
+
+  | Kind | Count | Notes |
+  |---|---:|---|
+  | `method` | 34 | the planning probe's count; the feasibility test's 35 minus one |
+  | `type` | 4 | the 3 records (`LoginRequest`, `LoginResponse`, `Task`) plus `CodereviewAppApplicationTests`, whose only method (`contextLoads() {}`) is empty, hence trivial |
+  | `block` | 3 | `pom.xml` ×2, `application.yml` ×1 (the feasibility test cut XML into 10 and YAML into 3 with a smaller target size; this packs blank-line paragraphs up to ~400 estimated tokens) |
+  | **Total** | **41** | 0 split into parts; largest 361 estimated tokens (`pom.xml#L31-65`) |
+
+  Against the feasibility test's 59: −1 method, +1 type, −8 Markdown sections (README no
+  longer indexed), −10 XML blocks and +2 −3 YAML blocks from the different block size.
+- **tree-sitter 0.25.2, not 0.26.0** (found while implementing T026): on Windows / CPython
+  3.12.2, 0.26.0 corrupted memory while `chunk_java` walked a large (400-statement) method.
+  Access violations surfaced at random points of unrelated Python code (a `str.split`, a
+  dataclass constructor) in 6–11 of 20 runs of the same script. Keeping the `Language`
+  object alive made no difference (11/20). The same script under 0.25.2 crashed 0 of 20
+  times, and the full suite is green. Not verified on Linux (Docker was unavailable); the
+  PR's `index-script-tests` run on ubuntu will exercise it.
 - **Alternatives**: javalang (no records); a regex-based splitter (breaks on nested types,
   annotations, and lambdas with braces); running a JVM-based parser (JavaParser) on the
   runner (a Java step in a Python script, for no gain over tree-sitter).
