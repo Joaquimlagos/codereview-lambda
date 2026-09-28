@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Joaquimlagos/codereview-lambda/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Joaquimlagos/codereview-lambda/actions/workflows/ci.yml)
 
-Serverless harness that routes pull requests to LLM models (Groq, Gemini) by complexity, uses RAG for project context, and automatically comments its review on the PR.
+Serverless harness that routes pull requests to LLM models (Groq, Cerebras, Gemini) by complexity, uses RAG for project context, and automatically comments its review on the PR.
 
 ## Architecture
 
@@ -31,10 +31,17 @@ Serverless harness that routes pull requests to LLM models (Groq, Gemini) by com
                        ├─ 3. InvokeLLM
                        │      tries the complexity tier's model list, in order:
                        │
-                       │      Groq ──▶ Gemini      ◀─ FALLBACK 1: next provider when a model
-                       │                              fails transiently (429 / 5xx / timeout),
-                       │                              rejects the prompt as too large (413),
-                       │                              or no longer exists (404)
+                       │      low / medium:  Groq ──▶ Cerebras ──▶ Gemini
+                       │      high:          Gemini ──▶ Cerebras ──▶ Groq
+                       │
+                       │      Groq      fast, free-tier baseline; leads low/medium
+                       │      Cerebras  same gpt-oss-120b model, 30K TPM vs. Groq's 8K —
+                       │                covers diffs too large for Groq to accept at all
+                       │      Gemini    deepest reasoning at "high"; leads the high tier
+                       │
+                       │      FALLBACK 1: next provider when a model fails transiently
+                       │      (429 / 5xx / timeout), rejects the prompt as too large
+                       │      (413 on Groq, 429 on Cerebras), or no longer exists (404)
                        │      every model down ──▶ LlmTransientError ──▶ Step Functions retries
                        │
                        └─ 4. PostComment
@@ -95,6 +102,54 @@ was specified, planned and broken into tasks with [GitHub Spec Kit](https://gith
 [`specs/001-pr-review-pipeline/`](specs/001-pr-review-pipeline)), governed by a
 [constitution](.specify/memory/constitution.md), and implemented together with an AI coding
 agent (Claude Code).
+
+## Live demo
+
+[`codereview-app` PR #3](https://github.com/Joaquimlagos/codereview-app/pull/3) is a standing
+demonstration: five security defects planted on purpose, presented as plausible-sounding work
+("make authentication tolerant of clock skew between servers and improve login
+diagnostics"). Nothing in the diff, the commit message, or the branch name hints that any of
+it is intentional — the reviewer gets the same signal a real PR would give.
+
+| Defect | Pre-checklist run | Post-checklist run (`gemini:high`) | Post-checklist run (`groq` fallback) |
+|---|---|---|---|
+| `JwtValidator.isValid` fail-open — both `catch` blocks return `true`, accepting an expired, malformed, or forged-signature token | caught | caught | caught |
+| Clock-skew tolerance set to 24 hours, keeping expired tokens usable for a day | not flagged | caught | caught |
+| Submitted password written to the log in plaintext | caught | caught | caught |
+| Different responses for "user not found" vs. "incorrect password" — user enumeration | **missed** | caught | caught |
+| `JwtValidatorTest`'s assertion inverted, so a rejected-token test now expects acceptance | caught | **missed** | **missed** |
+
+**Evolution.** Before the security checklist (research.md's "Security checklist for
+auth-sensitive changes") was added to the prompt, user enumeration went undetected — the
+reviewer caught the fail-open bug, the plaintext logging, and the inverted test, but never
+flagged the differing login-error responses. After the checklist, two separate real runs both
+caught the enumeration: once answered by `gemini:gemini-3.5-flash:high`, once by the
+fallback, `groq:openai/gpt-oss-120b:medium` — the same defect, caught by two different
+models, not a one-off.
+
+**What's still inconsistent.** The inverted test assertion — the subtlest planted defect —
+was caught in the pre-checklist run but missed in both post-checklist runs measured so far.
+The checklist sharpened detection of the response-handling issues it targets (enumeration,
+clock skew) without losing the fail-open and plaintext-logging findings it already caught;
+whether it crowded out attention to the test file specifically, or this is just run-to-run
+model variance, isn't established from three data points.
+
+## Results
+
+Two more measured cases from this round, against real `codereview-app` PRs:
+
+- **[PR #8](https://github.com/Joaquimlagos/codereview-app/pull/8)** (11 files, +686 lines):
+  previously failed with no review posted at all — Groq rejected the prompt as too large
+  (413) and Gemini was overloaded (503), exhausting both entries in the then-two-provider
+  high tier. With Cerebras added, the same PR is reviewed in ~7 s by
+  `cerebras:gpt-oss-120b:medium`, flagging two real bugs: a `NullPointerException` risk in a
+  sort comparator, and a non-atomic name-uniqueness check that lets concurrent requests race
+  past it.
+- **[PR #7](https://github.com/Joaquimlagos/codereview-app/pull/7)**: went from 7 inline
+  comments — several purely complimentary ("which is appropriate", "good for consistency") —
+  to 2, both real problems (a validation-ordering bug, a maintainability note), once the
+  review-quality rubric required every comment to name a category and forbade praise as a
+  comment entry.
 
 ## Model selection
 
@@ -264,4 +319,9 @@ groups.
 - **Retrieval is whole-file, top-3, single-pass.** Each index entry is one whole file, ranked
   by cosine similarity against the embedded diff; there is no sub-file chunking, no reranking
   step, and no token budgeting beyond the fixed `TOP_K = 3`. A large retrieved file consumes
-  prompt budget in full.
+  prompt budget in full. **Planned next step**: sub-file chunking, so a large file's retrieval
+  cost scales with the relevant section instead of the whole file.
+- **Gemini's `high`-reasoning attempt can still exceed its own 90 s timeout on a very large
+  diff.** Cerebras (see [Model selection](#model-selection)) gives the high tier a working
+  fallback when that happens, but doesn't eliminate the risk on Gemini's own lead attempt —
+  no dynamic timeout scaled to diff size exists yet.
