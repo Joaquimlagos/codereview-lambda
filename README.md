@@ -111,28 +111,31 @@ demonstration: five security defects planted on purpose, presented as plausible-
 diagnostics"). Nothing in the diff, the commit message, or the branch name hints that any of
 it is intentional — the reviewer gets the same signal a real PR would give.
 
-| Defect | Pre-checklist run | Post-checklist run (`gemini:high`) | Post-checklist run (`groq` fallback) |
-|---|---|---|---|
-| `JwtValidator.isValid` fail-open — both `catch` blocks return `true`, accepting an expired, malformed, or forged-signature token | caught | caught | caught |
-| Clock-skew tolerance set to 24 hours, keeping expired tokens usable for a day | not flagged | caught | caught |
-| Submitted password written to the log in plaintext | caught | caught | caught |
-| Different responses for "user not found" vs. "incorrect password" — user enumeration | **missed** | caught | caught |
-| `JwtValidatorTest`'s assertion inverted, so a rejected-token test now expects acceptance | caught | **missed** | **missed** |
+**Measured over 3 runs** (the baseline of
+[`specs/002-method-chunking`](specs/002-method-chunking/baseline.md), 2026-09-28): the same
+diff, the same retrieved context and a byte-identical prompt every time, so only the model's
+answer varies. All three were answered by `cerebras:gpt-oss-120b:medium`: the high tier's
+first choice, `gemini:gemini-3.5-flash:high`, returned HTTP 503 each time.
 
-**Evolution.** Before the security checklist (research.md's "Security checklist for
-auth-sensitive changes") was added to the prompt, user enumeration went undetected — the
-reviewer caught the fail-open bug, the plaintext logging, and the inverted test, but never
-flagged the differing login-error responses. After the checklist, two separate real runs both
-caught the enumeration: once answered by `gemini:gemini-3.5-flash:high`, once by the
-fallback, `groq:openai/gpt-oss-120b:medium` — the same defect, caught by two different
-models, not a one-off.
+| Defect | Detected |
+|---|---|
+| `JwtValidator.isValid` fail-open — both `catch` blocks return `true`, accepting an expired, malformed, or forged-signature token | 3 of 3 |
+| Submitted password written to the log in plaintext | 3 of 3 |
+| Clock-skew tolerance set to 24 hours, keeping expired tokens usable for a day | 1 of 3 |
+| Different responses for "user not found" vs. "incorrect password" — user enumeration | 1 of 3 |
+| `JwtValidatorTest`'s assertion inverted, so a rejected-token test now expects acceptance | 0 of 3 |
 
-**What's still inconsistent.** The inverted test assertion — the subtlest planted defect —
-was caught in the pre-checklist run but missed in both post-checklist runs measured so far.
-The checklist sharpened detection of the response-handling issues it targets (enumeration,
-clock skew) without losing the fail-open and plaintext-logging findings it already caught;
-whether it crowded out attention to the test file specifically, or this is just run-to-run
-model variance, isn't established from three data points.
+**On average the reviewer finds 2.67 of the 5 defects per run (range 2–4).** Two are
+reliable: the fail-open validation and the plaintext password are flagged every time. Two
+are hit-or-miss: the 24-hour clock skew and the user enumeration were each caught in one run
+of three. The inverted test assertion, the subtlest of the five, was never caught.
+
+**Why three runs, not one.** Earlier single runs made the picture look better than it is:
+after the security checklist (research.md's "Security checklist for auth-sensitive changes")
+was added to the prompt, two separate runs each caught the enumeration, and one of the three
+runs above found 4 of 5. Repeating the identical prompt showed that was the good end of the
+range, not the typical result. Any change to the pipeline is now measured against the mean
+over 3 runs, never against a single review.
 
 ## Results
 
