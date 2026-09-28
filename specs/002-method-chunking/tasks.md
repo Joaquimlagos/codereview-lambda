@@ -111,8 +111,8 @@ built on per-file queries.
 - [x] T031 [P] [US2] app: new `.github/workflows/index-script-tests.yml` (on `pull_request`, paths `scripts/**` and `.github/workflows/index-*.yml`), running `python -m unittest discover -s scripts/tests` (research R12)
 - [x] T032 [US2] app: `python scripts/build_index.py --dry-run` on `develop`'s tree; write the counts by kind into lambda `research.md` R1 as FR-003's reference
 - [x] T033 [US2] app: `CLAUDE.md`: index contract → v2 (link to lambda's contracts/index-v2.md), "one chunk per file" → method chunking, the stdlib-only paragraph → the approved pinned exception, the concurrency group; `README.md`, if it describes the index
-- [ ] T034 🔒 app: push `feat/method-chunking`, open a PR → **`develop`** (its own review still runs on the v1 index, as expected)
-- [ ] T035 🔒 app: before merging, note the day's value in the **daily chart** of `gemini-embedding-001` requests in AI Studio (the rate-limit page shows 28-day peaks, research R15, so it cannot be used); merge; confirm `index-codebase` logs 1 call and 0 retries; confirm the S3 object is `version 2`; record the counter again → research R4 (1 or N per batch) (user-assisted: AI Studio is a UI)
+- [x] T034 🔒 app: push `feat/method-chunking`, open a PR → **`develop`** (its own review still runs on the v1 index, as expected)
+- [x] T035 🔒 app: before merging, note the day's value in the **daily chart** of `gemini-embedding-001` requests in AI Studio (the rate-limit page shows 28-day peaks, research R15, so it cannot be used); merge; confirm `index-codebase` logs 1 call and 0 retries; confirm the S3 object is `version 2`; record the counter again → research R4 (1 or N per batch) (user-assisted: AI Studio is a UI)
 
 **Checkpoint**: v2 is live; rollback = restore the previous S3 object version (contracts/index-v2.md).
 
@@ -135,7 +135,18 @@ built on per-file queries.
 
 ## Follow-ups (not required for this feature)
 
-- [ ] T041 app: **token-bounded embedding batches** in `scripts/build_index.py` (research R4, R15). Besides the 100-input cap, cap each `batchEmbedContents` call at an estimated token total safely under the 30,000 TPM limit (e.g. 25,000), and when the next batch would exceed what is left of the current minute's budget, wait for the window to roll over instead of relying on 429 retries. Add a stub-server test with oversized chunks that asserts the per-call token cap and the wait. Not needed at today's size (41 chunks, ~5,100 estimated tokens, one call); needed before the indexed code grows toward ~30,000 estimated tokens
+- [ ] T041 app: **rate-bounded embedding batches** in `scripts/build_index.py` (research R4, R15, R16). Each input counts as one request (R16), so besides the 100-input cap per call, keep **both** of the current minute's budgets: estimated tokens safely under 30,000 TPM (e.g. 25,000) **and** inputs safely under 100 RPM (e.g. 90). When the next batch would exceed what is left of either, wait for the window to roll over instead of relying on 429 retries. Add stub-server tests with many small chunks (the RPM cap) and with oversized chunks (the TPM cap) that assert the per-minute caps and the wait. Not needed at today's size (41 chunks, ~5,100 estimated tokens, one call); needed before the index approaches ~90 chunks or ~25,000 estimated tokens
+
+### Backlog (no task yet)
+
+- **Let the high tier decide something that affects the review.** Since 2026-09-28 the high
+  tier runs the same model and reasoning effort as medium (001 research, "High tier:
+  Cerebras first, Gemini last"; PR #16), so the complexity classification no longer changes
+  who answers or how hard it thinks. It could decide something else the review depends on,
+  such as more RAG context for high-tier PRs (a larger TOP_N or CONTEXT_TOKEN_CAP) or a
+  larger prompt budget, measured the same way as 002 (3 runs per PR).
+
+- **Incremental indexing** (research R16). Every input costs one of the 1,000 embedding requests per day, so a full rebuild on every push to `develop` stops scaling: at 500 chunks one build spends half the daily quota. Re-embed only chunks whose content changed since the published index (stable chunk ids plus a content hash per chunk), and copy the other vectors forward. It needs the previous index as input and a rule for chunks whose id changed because their lines moved.
 
 ---
 

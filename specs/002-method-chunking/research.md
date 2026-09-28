@@ -110,8 +110,9 @@ cannot be settled by reading documentation.
   page shows the **peak over 28 days**, not the day's total, so it cannot answer this.
   Compare the **daily chart** of `gemini-embedding-001` requests for the day of the first
   real v2 build against the days around it. A jump of ~1 per build means per call, a jump of
-  ~41 means per input. Write the result here. The design is sized for the worst case (N):
-  41 inputs per build today, plus K per review (one per changed file).
+  ~41 means per input. **Answered in R16: per input** (27 → 68 RPD for a 41-chunk build
+  in one call). The worst case the design was sized for is the real one: 41 requests per
+  build today, plus K per review (one per changed file).
 - **Batches are limited by count only, not by tokens.** The 30,000 TPM limit (R15) is the
   constraint that binds first: today's whole index is ~5,100 estimated tokens in one call,
   but a batch of 100 chunks at the 1,800-token split threshold would be ~180,000. See T041.
@@ -344,9 +345,11 @@ replace the estimates used earlier in this file and in research 001 for Google's
 | Model | RPM | TPM | RPD | Observed |
 |---|---:|---:|---:|---|
 | `gemini-embedding-001` | 100 | 30,000 | 1,000 | 28-day peak **33.55K TPM**, above the limit |
-| Gemini 3.5 Flash (`gemini-3.5-flash`) | 5 | 250,000 | **20** | **21 of 20** requests used on 2026-09-28 |
+| Gemini 3.5 Flash (`gemini-3.5-flash`) | 5 | 250,000 | **20** | 28-day peak **21 of 20** requests in one day; **8 of 20** on the last day (1-day view) |
 
-- **The page shows 28-day peaks, not daily totals.** Any before/after comparison of usage
+- **The page's default view shows 28-day peaks, not the current day.** The "21 of 20" first
+  recorded here as 2026-09-28's usage was the peak of one day within those 28 days. With the
+  1-day interval, the page shows 8 of 20 for the last day. Any before/after comparison of usage
   (T035) must use the per-day chart, not these peak figures.
 - **Embedding TPM is the binding limit for the index build.** The 33.55K peak shows the
   30,000 TPM limit has already been exceeded, at least momentarily. The build's retry on
@@ -357,12 +360,57 @@ replace the estimates used earlier in this file and in research 001 for Google's
 - **The review-time query side is far below the limits**: one batch call per review, one
   input per changed file. PR #8's 11 files are about 8,000 embedding tokens (baseline.md §2).
 - **Gemini 3.5 Flash's 20 RPD is the scarcest resource in the pipeline**, and the high
-  tier leads with it; consequences in R14. The 21/20 on 2026-09-28 came from that day's
-  high-tier reviews (every PR #3 and #8 run tries Gemini first), possibly plus the
-  measurement script's `countTokens` calls on `gemini-3.5-flash`. Whether `countTokens`
+  tier leads with it; consequences in R14. The quota has already been exceeded on at least
+  one day in the last 28 (peak 21 of 20); the last day used 8. Every PR #3 and #8 run tries
+  Gemini first, so each high-tier review costs one of the 20 whether it answers or not. Whether `countTokens`
   counts against RPD is not known, which is another reason to keep keyed measurement runs
   to one per PR (baseline.md, step 4).
 - The research-001 budget ceiling for Gemini (100,000 estimated prompt tokens, R9) stays
   under its 250,000 TPM, so the budget table needs no change for Gemini's TPM. RPD, not
   TPM, is what limits Gemini.
+
+## R16. Switch-over check: index version 2 published (T035)
+
+- **Build**: codereview-app PR #16 merged into `develop` (`5a0eb9b`). `index-codebase`
+  run #7 (9 s) installed `tree-sitter 0.25.2` and logged `41 chunks: 34 method, 4 type,
+  3 block; 0 split into parts; largest 361 estimated tokens`, then `Embedded with 1 call(s),
+  0 retr(y/ies)` and `Wrote index.json (version 2) with 41 chunks`. It uploaded at
+  2026-09-28T20:03:46Z (S3 version `8oFWxwzN9wuEFdBcxzpBXFCqTl7c8fYt`, 461,253 bytes). The
+  counts match the dry run recorded in R1, and this is also the first Linux run of the
+  pinned tree-sitter.
+- **Contract check**: the published object was checked against contracts/index-v2.md.
+  Top-level fields are exactly the contract's: `version: 2`, `branch: develop`, `commit`
+  equal to `develop`'s `5a0eb9b…`, `gemini-embedding-001`, 768. All 41 ids are unique and
+  start with their `path`. Method and type ids end with their line range, block ids are
+  `#L<start>-<end>`, and `symbol` matches `kind`. Every chunk has non-empty `text` and no
+  `part`. Every vector has 768 floats, is non-zero, and all 41 are distinct. No embedded
+  input is over the 1,800-token split threshold. **All checks passed.**
+- **Read by the deployed Lambda code, offline** (no embedding call): `_index_version` returns
+  2. `ranking.rank` with one chunk's own vector as the query ranks that chunk first at
+  1.0000 and selects 8 of 41. The pre-002 v1 ranking (`_top_chunks`) also reads the index
+  without error, which confirms the reversed-deploy-order safety net on the real object.
+- **Rollback** is available: the previous v1 object is kept as S3 version
+  `Gbq3QxTKViw51IFuKCo5BwzgPQs_zodO` (contracts/index-v2.md, "Rollback").
+- **Quota accounting (R4): each input counts as one request.** From the AI Studio daily
+  view of `gemini-embedding-001` requests (RPD column, 1-day interval): **27** at 20:01Z,
+  before the merge, and **68** after. 68 = 27 + 41, the index's chunk count, although the
+  build made a single `batchEmbedContents` call. The last review before the merge was PR
+  #16's own (execution `25ae08de`, 19:27Z), before the 20:01Z reading, and none ran after it,
+  so the difference is the build alone. Batching saves wall-clock time (the 9.4× of the
+  feasibility test) and HTTP round trips, **not quota**.
+- **Consequences**:
+  - **Every full index build costs 41 of the 1,000 requests per day**, and the build runs
+    on every push to `develop`. Today that is about 24 builds a day before the quota runs
+    out, ignoring reviews.
+  - **Reviews count per changed file too**: RetrieveContext's v2 query batch spends one
+    request per changed file, so 11 for a PR like #8 and 5 for #3 or #7.
+  - **Incremental indexing becomes necessary as the project grows.** At 500 chunks, one full
+    rebuild would spend half the daily quota; at 1,000, all of it. Re-embedding only the
+    chunks whose content changed (reusing stable ids and a content hash per chunk) removes
+    that scaling. See the backlog in tasks.md.
+  - **T041 must also cap chunks per minute.** Since each input is one request, a single
+    batch of up to 100 inputs is up to 100 requests, which is the whole 100 RPM limit in
+    one call. T041 caps each batch by estimated tokens (under 30,000 TPM) *and* by input
+    count per minute (under 100 RPM), and waits between batches when either budget for
+    the current minute is spent.
 
