@@ -1,7 +1,12 @@
 # Baseline: RAG with one chunk per file (before method chunking)
 
 **Feature**: [spec.md](spec.md) · **Recorded**: 2026-09-28 · **Raw data**: [baseline-results.json](baseline-results.json)
-· **Script**: [measure_review.py](measure_review.py)
+(first run per PR, with similarities) and [baseline-runs.json](baseline-runs.json) (all runs)
+· **Scripts**: [trigger_runs.py](trigger_runs.py), [measure_review.py](measure_review.py)
+
+Sections 1–4 describe the **first run** of each PR in detail. Section 5 adds two more runs
+per PR and gives the numbers the "after" measurement is compared against: **3 runs per
+PR**.
 
 This is the "before" half of the before/after comparison for `002-method-chunking`. The
 "after" measurement MUST use the same three PRs and the procedure in
@@ -29,6 +34,12 @@ their branches. PR #8 already had a run on the current deployment.
 | #8 (large, 11 files) | `test/projects-module` | `cf32768` (existing head) | `ea864ec9…` | 2026-09-28 14:13:24 |
 
 All three executions `SUCCEEDED`, all with `needsContext: true`.
+
+The six additional runs in section 5 (2026-09-28 18:55–19:04Z) ran on the deployment that
+followed PR #9 (`CodeSha256 AG6+S/49t9aU0bSlb9oDO1b5bk34rocBiMCtu259c1M=`), still against
+the same v1 index object. On a v1 index that deployment is byte-for-byte the code above:
+the same retrieval and the same prompt. research.md R13 checked this on PR #7, and every
+extra run below reproduced the first run's top-3 and prompt size exactly.
 
 ## 1. Prompt tokens by section
 
@@ -149,19 +160,58 @@ the summary, or a comment on the right line about something else, does not count
 | 4 | User enumeration via distinct messages (`AuthController`) | ✅ | `AuthController.java:28` security/medium |
 | 5 | Inverted test assertion (`JwtValidatorTest`) | ❌ | no comment on the test file |
 
-**Result: 4 of 5.** Only the inverted test was missed, the same gap the README records for
-every post-checklist run. The previous deployment's run (`601cdd53`, Groq, 03:47Z) also
-scored 4/5 (it split defect 1 across two comments, which still counts once). That is weak
-evidence the score is stable across these two models.
+**Result for this first run: 4 of 5.** Only the inverted test was missed. The two
+repeated runs in section 5 scored 2 of 5, so the baseline figure is the **mean over 3 runs:
+2.67 of 5**, not this single run.
+
+## 5. Repeated runs (3 per PR)
+
+Each PR was re-run twice more, one review at a time with a 60 s gap
+([trigger_runs.py](trigger_runs.py)), to keep Cerebras (5 requests/minute) out of its
+limit. All nine runs used the same diff per PR and the same v1 index. Retrieval is
+deterministic, so every run of a PR got the same top-3 and a byte-identical prompt:
+
+| PR | Runs | Model (every run) | Prompt tokens (provider) | Top-3 (every run) |
+|---|---|---|---:|---|
+| #3 | `209bc841`, `7ad12e48`, `cf840128` | `cerebras:gpt-oss-120b:medium` (Gemini `:high` → 503 each time) | 3,224 | AuthController, JwtValidator, JwtValidatorTest |
+| #7 | `7df059d3`, `10de2068`, `880195c1` | `groq:openai/gpt-oss-120b:medium` (first choice) | 3,258 | TaskControllerTest, TaskServiceTest, TaskService |
+| #8 | `ea864ec9`, `6c549856`, `840e2f46` | `cerebras:gpt-oss-120b:medium` (Gemini `:high` → 503 each time) | 7,848 | TaskService, TaskController, Task |
+
+**Only the model's answer varies.** Inline comments per run:
+
+| PR | Run 1 | Run 2 | Run 3 | Mean | Range | σ |
+|---|---:|---:|---:|---:|---|---:|
+| #3 | 4 (security ×4; high ×2, medium ×2) | 3 (security ×3; high ×3) | 3 (security ×3; high ×3) | **3.33** | 3–4 | 0.47 |
+| #7 | 2 (bug/medium, maintainability/low) | 1 (maintainability/low) | 1 (maintainability/low) | **1.33** | 1–2 | 0.47 |
+| #8 | 1 (bug/medium) | 1 (bug/low) | 1 (bug/medium) | **1.00** | 1 | 0 |
+
+PR #7 also has the T025 run (`f0ce8108`, same prompt, 1 comment, maintainability/low). It
+is kept out of the mean so that every PR has the same n; including it gives 1.25.
+
+**PR #3, detected defects per run** (answer key and rule from section 4):
+
+| Run | 1. Fail-open | 2. 24 h skew | 3. Password in log | 4. Enumeration | 5. Inverted test | Detected |
+|---|---|---|---|---|---|---:|
+| `209bc841` | ✅ `:55` | ✅ `:28` | ✅ `:29` | ✅ `:28` | ❌ | 4 |
+| `7ad12e48` | ✅ `:62` | ❌ | ✅ `:30`, `:37` (1 defect, 2 comments) | ❌ | ❌ | 2 |
+| `cf840128` | ✅ `:55` | ❌ | ✅ `:29`, `:36` (1 defect, 2 comments) | ❌ | ❌ | 2 |
+| **Rate** | 3/3 | 1/3 | 3/3 | 1/3 | 0/3 | **mean 2.67, range 2–4, σ 0.94** |
+
+**Reading**: two defects are caught every time (fail-open, password in the log). Two are
+caught only once in three (skew, enumeration), and the inverted test never. The single-run
+4/5 in section 4 was the best of three, not the typical result. The "after" measurement is
+compared against the mean and the per-defect rate, never against one run.
 
 ## Limitations to keep in mind when comparing
 
-- **One run per PR.** PR #3's history shows run-to-run variance (the inverted test was caught
-  once, pre-checklist). Before/after on n=1 can only reveal large effects. Consider 2 runs
-  per PR on each side if the difference turns out to be small.
-- **The answering model is not controlled.** Gemini `:high` returned 503 on both high-tier
-  runs, so Cerebras answered. If an "after" run is answered by a different model than its
-  baseline row, re-trigger it (up to 2 extra attempts) rather than compare across models.
+- **Three runs per PR, before and after.** The "after" measurement MUST use the same number
+  of runs (3 per PR), triggered the same way (one at a time, 60 s apart), and compare
+  means, ranges and PR #3's per-defect rate. With n=3 and PR #3's σ of 0.94 defects, only a
+  difference of about one defect or more in the mean is worth reading as an effect.
+- **The answering model is not controlled.** Gemini `:high` returned 503 on all six
+  high-tier runs, so Cerebras answered every PR #3 and #8 review, and Groq every PR #7
+  review. If an "after" run is answered by a different model than that PR's baseline runs,
+  re-trigger it (up to 2 extra attempts) rather than compare across models.
 - The index is rebuilt on every push to `develop`. The "after" index will be built from a
   later commit, so its `commit` must be recorded next to the results.
 
@@ -181,29 +231,35 @@ Run from codereview-lambda's root, with the `codereview` AWS profile.
    aws s3 cp s3://codereview-artifacts/index/develop/index.json - \
      | python -c "import json,sys; i=json.load(sys.stdin); print(i['version'], i['commit'], i['generatedAt'], len(i['chunks']))"
    ```
-2. **Trigger the three reviews at the same time.** Use one empty commit per branch, pushed
-   without checking anything out, from codereview-app's root:
+2. **Trigger 3 runs per PR, one at a time.** `trigger_runs.py` pushes an empty commit
+   (no checkout), waits for that PR's execution to finish, and waits 60 s before the next
+   one, so Cerebras stays under 5 requests/minute. It takes about 15 minutes. Its lines give
+   the execution prefixes for step 4:
    ```sh
-   git fetch origin
-   for b in feature/auth-resilience test/task-title-validation test/projects-module; do
-     new=$(git commit-tree "origin/$b^{tree}" -p "origin/$b" \
-       -m "chore: retrigger AI review (method-chunking after-measurement)")
-     git push origin "$new:refs/heads/$b"
-   done
+   AWS_PROFILE=codereview python specs/002-method-chunking/trigger_runs.py \
+     --app ../codereview-app --order 3 7 8 3 7 8 3 7 8 --label "method-chunking after"
    ```
-3. **Wait until the three new executions are `SUCCEEDED`** (about 30 s to 2 min):
-   ```sh
-   aws stepfunctions list-executions --max-results 5 \
-     --state-machine-arn arn:aws:states:us-east-1:424678835315:stateMachine:codereview-pr-review \
-     --query 'executions[].[name,status,startDate]' --output text
-   ```
-4. **Run the script** with a valid Gemini key, needed for similarities and Gemini token
-   counts. Everything else works without one:
+3. **Check that every run `SUCCEEDED`** (the script prints the status), and that each PR was
+   answered by the same model as its baseline runs (section 5; see Limitations).
+4. **Run the script.** The Gemini key is needed only for the similarity recompute and the
+   Gemini token counts. It is read from Secrets Manager and handed **only to the script's
+   process**: an inline assignment on the same command line, never printed, never written
+   to a file, never exported in the shell. `--env /dev/null` keeps the script from reading
+   a stale key out of `.env`:
    ```sh
    pip install boto3 requests tiktoken pydantic   # in any venv
-   GEMINI_API_KEY=... python specs/002-method-chunking/measure_review.py \
-     --out specs/002-method-chunking/after-results.json pr:3 pr:7 pr:8
+   # All 9 runs, without the key: comments, models and tokens need no Gemini call.
+   AWS_PROFILE=codereview python specs/002-method-chunking/measure_review.py --env /dev/null \
+     --out specs/002-method-chunking/after-runs.json <the 9 execution prefixes from step 2>
+   # One run per PR with the key: the similarity recompute and Gemini token counts.
+   AWS_PROFILE=codereview GEMINI_API_KEY="$(AWS_PROFILE=codereview aws secretsmanager \
+       get-secret-value --secret-id codereview/gemini-api-key --query SecretString --output text)" \
+     python specs/002-method-chunking/measure_review.py --env /dev/null \
+       --out specs/002-method-chunking/after-results.json pr:3 pr:7 pr:8
    ```
+   Keep the keyed run to one execution per PR: it makes about 7 Gemini calls per execution,
+   and on the free tier 10 executions in a row hit HTTP 429. That quota is shared with the
+   live pipeline.
    `pr:N` selects the most recent succeeded execution for PR N. The script needs the
    `build_prompt` from the commit being measured, so run it from a checkout of that commit.
    Once version 2 is live, the context section is whatever `build_prompt` emits for grouped

@@ -91,8 +91,8 @@ built on per-file queries.
 
 - [x] T022 lambda: update `specs/001-pr-review-pipeline/contracts/step-io-contracts.md` (RetrieveContext v1/v2, output fields, `TOP_N`, log lines, the new error class) and the RetrieveContext line in `CLAUDE.md` / `README.md` (FR-032)
 - [x] T023 lambda: `ruff check src tests && pytest`; `terraform fmt/validate` unchanged
-- [ ] T024 🔒 lambda: push `feat/method-chunking`, open a PR → **`develop`** (never `main`)
-- [ ] T025 🔒 lambda: after the merge, `terraform apply` from `develop`; re-trigger PR #7; check with `measure_review.py pr:7` that it returns the baseline's top-3 in the same order and logs `index_version: 1` (quickstart §4)
+- [x] T024 🔒 lambda: push `feat/method-chunking`, open a PR → **`develop`** (never `main`)
+- [x] T025 🔒 lambda: after the merge, `terraform apply` from `develop`; re-trigger PR #7; check with `measure_review.py pr:7` that it returns the baseline's top-3 in the same order and logs `index_version: 1` (quickstart §4)
 
 **Checkpoint**: the new Lambda is live and behaviour-neutral on v1.
 
@@ -120,9 +120,9 @@ built on per-file queries.
 
 ## Phase 9: US6, measure the same way (P3)
 
-- [ ] T036 🔒 lambda: Groq budget probe (quickstart §6, research R9). Send prompts of increasing estimated size (e.g. 3,500 / 4,300 / 5,000) at `medium`; record prompt and output tokens and whether each was accepted. Pick the value, and record how many of PRs #3/#7/#8 it would skip onto Cerebras (5 RPM). Any change goes in a small PR → `develop`, then redeploy. **Then re-evaluate** whether the over-budget skip (FR-024) should also apply to reviews with no context, which today keep the pre-002 prompt and never skip (decision approved 2026-09-28: skip limited to v2 context until Groq's real limit is measured)
+- [ ] T036 🔒 lambda: Groq budget probe (quickstart §6, research R9). Send prompts of increasing estimated size (e.g. 3,500 / 4,300 / 5,000) at `medium`; record prompt and output tokens and whether each was accepted. Pick the value, and record how many of PRs #3/#7/#8 it would skip onto Cerebras (5 RPM). **Fix the unit mismatch first** (research R9): either express every provider budget in estimate units, `(TPM − reserve) × measured factor`, or divide the estimate by a per-provider factor (gpt-oss ≈ 1.44, Gemini ≈ 1.19) before comparing; the embedding split threshold keeps the uncorrected, pessimistic estimate. Any change goes in a small PR → `develop`, then redeploy. **Then re-evaluate** whether the over-budget skip (FR-024) should also apply to reviews with no context, which today keep the pre-002 prompt and never skip (decision approved 2026-09-28: skip limited to v2 context until Groq's real limit is measured)
 - [ ] T037 lambda: `specs/002-method-chunking/measure_review.py`: read `rag_query`/`rag_chunk`/`llm_attempt` lines from CloudWatch as the primary source for scores; recompute v2 scores by importing `retrieve_context.diff_queries` and `ranking` as a cross-check; report disagreements; add the score distribution (min, max, range, top-N vs rest, margin at the cut, standardised gap) over all candidates after exclusion (spec FR-033, SC-012); keep the `pr:N` selector and the section markers
-- [ ] T038 🔒 lambda: run baseline.md's procedure unchanged (empty commits on the three PR branches, all at once), score PR #3 against the 5-defect key, and write `specs/002-method-chunking/after.md` with the same tables (score distribution included) plus SC-002/005/007/010/011/012; open a docs PR → `develop`
+- [ ] T038 🔒 lambda: run baseline.md's procedure unchanged (`trigger_runs.py`, 3 runs per PR, one at a time, 60 s apart), score each PR #3 run against the 5-defect key (mean and per-defect rate), and write `specs/002-method-chunking/after.md` with the same tables (score distribution included) plus SC-002/005/007/010/011/012; open a docs PR → `develop`
 
 ---
 

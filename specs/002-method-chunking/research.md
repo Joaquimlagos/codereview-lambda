@@ -199,6 +199,25 @@ cannot be settled by reading documentation.
   fast 413 from Groq; too low moves load onto the provider with the smallest request
   rate. T036 records how many of the three measured PRs would be skipped on Groq at the
   chosen value.
+- **The estimate over-counts gpt-oss by ~44%, so the budgets above mix units.** Measured on
+  the T025 run (R13): the PR #7 prompt that Groq accepted with **3,258** real
+  `prompt_tokens` was estimated at **4,677** (`llm_attempt` log). That is a factor of 1.44.
+  The same prompt measures 3,944 on Gemini's own `countTokens` (baseline.md §1), a factor of
+  1.19. The derivations in the table subtract *real* output reserves from *real* TPM
+  limits, but the result is compared against an *estimate*. In real tokens, Groq medium's
+  4,300 is therefore only about 3,000. That is below the 3,258-token prompt Groq already
+  accepts today, so under v2 packing Groq would drop context it would have accepted.
+- **T036 must fix the units**, choosing one of:
+  1. **Budgets in estimate units**: `budget = (TPM − output reserve) × factor` per
+     provider, with the factor measured (gpt-oss ≈ 1.44, Gemini ≈ 1.19 on these prompts);
+     or
+  2. **A per-provider factor applied to the estimate**: `estimate / factor` compared
+     against a budget kept in real tokens. This keeps the table readable in the providers'
+     own units.
+
+  Either way the estimate must stay pessimistic for the *embedding* split threshold (R3),
+  where under-counting means silent truncation. Only the prompt budget gets the
+  per-provider correction.
 - **Rationale**: these numbers restate limits already measured in research 001. The budget
   only decides how much *context* to include, and a too-generous Groq budget costs at most
   one fast 413 before falling back, which is today's behaviour.
@@ -239,3 +258,29 @@ cannot be settled by reading documentation.
 - **Alternatives**: running the tests inside `index-codebase.yml` (too late: only after
   merge); adding a job to `pr-checks.yml` (widens a workflow whose scope CLAUDE.md
   deliberately keeps narrow).
+
+## R13. Rollout check: the Lambda deploy is neutral on v1 (T025)
+
+- **What was checked**: after PR #9 merged, `terraform apply` from `develop@ce7b3b2`
+  deployed all four functions (`CodeSha256 AG6+S/49t9aU0bSlb9oDO1b5bk34rocBiMCtu259c1M=`,
+  2026-09-28T18:46–18:47Z). The index stayed the baseline's S3 object (`version 1`,
+  `88801e4`, version id `Gbq3QxTKViw51IFuKCo5BwzgPQs_zodO`). An empty commit (`0e7cb6a`) on
+  PR #7's branch produced execution `f0ce8108`, measured with `measure_review.py pr:7`.
+- **Result: identical to the baseline where the code decides.**
+
+  | | Baseline (`7df059d3`) | T025 (`f0ce8108`) |
+  |---|---|---|
+  | Top-3 files, in order | TaskControllerTest, TaskServiceTest, TaskService | same |
+  | Similarities | 0.8004 / 0.7904 / 0.7850 | same |
+  | Prompt tokens (instructions / diff / context, o200k) | 525 / 1,451 / 1,212 | same |
+  | Groq `prompt_tokens` | 3,258 | 3,258 |
+  | `rag_*` log lines | — | none (the v1 path emits none) |
+  | `llm_attempt` | — | 1 line: budget 4,300, estimated 4,677, 3 kept, 0 dropped, not skipped |
+
+- **What differed**: the review itself. It had 1 inline comment (maintainability/low)
+  instead of the baseline's 2, from a byte-identical prompt to the same model. That is pure
+  run-to-run variance, and it is why the baseline was extended to several runs per PR
+  (baseline.md).
+- **Side finding**: the `llm_attempt` line exposed the estimate/real-token mismatch
+  recorded in R9.
+

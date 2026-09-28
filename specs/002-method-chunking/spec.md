@@ -352,8 +352,9 @@ the Lambda `CodeSha256` and index commit it measured.
 ### Measurement
 
 - **FR-033**: The "after" measurement MUST use PRs #3, #7 and #8 and the procedure and
-  script in [baseline.md](baseline.md), unchanged except as that file allows. It happens
-  after both deploys, and the results go in `after.md`. Similarity scores come from the
+  script in [baseline.md](baseline.md), unchanged except as that file allows, including
+  **3 runs per PR** triggered one at a time (`trigger_runs.py`). It happens after both
+  deploys, and the results go in `after.md`. Similarity scores come from the
   FR-022 log lines. The script's recompute is kept as a cross-check, and any disagreement
   is reported. It MUST also report the distribution of similarity scores over all scored
   candidates (min, max, range, top-N vs rest, margin at the cut, and the standardised gap
@@ -390,8 +391,10 @@ the Lambda `CodeSha256` and index commit it measured.
   whose retries run out publishes nothing and leaves the previous index in place.
 - **SC-005**: For PRs #3, #7 and #8, every model attempt's context is within its FR-023
   budget, and no attempt fails with 413 because of context.
-- **SC-006**: PR #3 detects at least as many planted defects as the baseline (4 of 5).
-  Detecting the inverted test would be an improvement over the baseline.
+- **SC-006**: Over 3 runs, PR #3's mean number of detected defects is at least the
+  baseline's (2.67 of 5, range 2–4; baseline.md §5). Its per-defect detection rate is also
+  reported against the baseline's (fail-open 3/3, skew 1/3, password 3/3, enumeration 1/3,
+  inverted test 0/3).
 - **SC-007**: 0 selected chunks overlap lines the diff changes. Baseline: 3 of 3 files for
   PR #3 and 3 of 3 for PR #7 were files the PR modifies.
 - **SC-008**: Across the rollout, 0 reviews fail because of the index version, whether the
@@ -403,7 +406,8 @@ the Lambda `CodeSha256` and index commit it measured.
   either way. A lower value is a finding, not a failure of the run.
 - **SC-011**: No provider is ever called with a prompt over its budget. Every skip appears
   in the logs with the estimate and the budget.
-- **SC-009**: PR #7 and #8 inline-comment counts, categories and severities are reported
+- **SC-009**: PR #7 and #8 inline-comment counts (mean and range over 3 runs; baseline 1.33 and
+  1.00), categories and severities are reported
   next to the baseline. `parse_fallback` stays at 0.
 
 ## Assumptions
