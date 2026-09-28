@@ -22,8 +22,8 @@ built on per-file queries.
 
 ## Phase 1: Setup
 
-- [ ] T001 🔒 app: create branch `feat/method-chunking` from `origin/develop` (no push until T034)
-- [ ] T002 [P] app: add `scripts/requirements-index.txt` pinning `tree-sitter==0.26.0` and `tree-sitter-java==0.23.5` (research R1)
+- [x] T001 🔒 app: create branch `feat/method-chunking` from `origin/develop` (no push until T034)
+- [x] T002 [P] app: add `scripts/requirements-index.txt` pinning `tree-sitter==0.25.2` (0.26.0 corrupted memory, research R1) and `tree-sitter-java==0.23.5` (research R1)
 - [x] T003 [P] lambda: before any code change, capture golden fixtures from the current code: `tests/fixtures/index_v1_small.json` (4 files, fixed vectors), and the current `retrieve_context` output and `build_prompt` output for it, as `tests/fixtures/golden_v1_context.json` and `tests/fixtures/golden_v1_prompt.txt` (FR-015)
 
 ---
@@ -91,8 +91,8 @@ built on per-file queries.
 
 - [x] T022 lambda: update `specs/001-pr-review-pipeline/contracts/step-io-contracts.md` (RetrieveContext v1/v2, output fields, `TOP_N`, log lines, the new error class) and the RetrieveContext line in `CLAUDE.md` / `README.md` (FR-032)
 - [x] T023 lambda: `ruff check src tests && pytest`; `terraform fmt/validate` unchanged
-- [ ] T024 🔒 lambda: push `feat/method-chunking`, open a PR → **`develop`** (never `main`)
-- [ ] T025 🔒 lambda: after the merge, `terraform apply` from `develop`; re-trigger PR #7; check with `measure_review.py pr:7` that it returns the baseline's top-3 in the same order and logs `index_version: 1` (quickstart §4)
+- [x] T024 🔒 lambda: push `feat/method-chunking`, open a PR → **`develop`** (never `main`)
+- [x] T025 🔒 lambda: after the merge, `terraform apply` from `develop`; re-trigger PR #7; check with `measure_review.py pr:7` that it returns the baseline's top-3 in the same order and logs `index_version: 1` (quickstart §4)
 
 **Checkpoint**: the new Lambda is live and behaviour-neutral on v1.
 
@@ -103,14 +103,14 @@ built on per-file queries.
 **Goal**: v2 index built by tree-sitter chunking, a size guard, batch calls and retry; no racing builds.
 **Independent test**: spec US2; quickstart §2–3.
 
-- [ ] T026 [P] [US2] app: `scripts/tests/test_chunking.py`: a record with and without methods (`type` chunk), nested classes (`Outer.Inner`), overloads (distinct ids), the trivial rule (getter, setter, empty body, assign-only constructor dropped; a validating compact constructor kept), header content (package, declaration, fields; no imports), a parse error falling back to blocks with a warning, non-Java blocks at ≤~400 tokens, a method over 1,800 estimated tokens split into parts that each repeat the header, ids identical across two runs
-- [ ] T027 [P] [US2] app: `scripts/tests/test_embedding.py` with a local `http.server` stub: ≤100 per batch, alignment and dimension checks, retry on 429 honouring `RetryInfo.retryDelay`/`Retry-After`, on 503, and on timeout; fail-fast on 400; after retries run out → non-zero exit and no `index.json` written
-- [ ] T028 [US2] app: `scripts/chunking.py`: the tree-sitter chunker, trivial rule, headers, `type` chunks, blocks, splitting, ids (FR-001 to FR-006, FR-011) (depends on T002, T026)
-- [ ] T029 [US2] app: `scripts/build_index.py`: collect → chunk → validate → batch embed with retry (replacing the `sys.exit` calls on transient errors) → write v2 with the v1 field names; `--dry-run` (chunk and count only); the FR-013 summary log (depends on T027, T028)
-- [ ] T030 [P] [US2] app: `.github/workflows/index-codebase.yml`: `concurrency: {group: index-codebase-${{ github.ref }}, cancel-in-progress: true}`; a `pip install -r scripts/requirements-index.txt` step (FR-009, research R6)
-- [ ] T031 [P] [US2] app: new `.github/workflows/index-script-tests.yml` (on `pull_request`, paths `scripts/**` and `.github/workflows/index-*.yml`), running `python -m unittest discover -s scripts/tests` (research R12)
-- [ ] T032 [US2] app: `python scripts/build_index.py --dry-run` on `develop`'s tree; write the counts by kind into lambda `research.md` R1 as FR-003's reference
-- [ ] T033 [US2] app: `CLAUDE.md`: index contract → v2 (link to lambda's contracts/index-v2.md), "one chunk per file" → method chunking, the stdlib-only paragraph → the approved pinned exception, the concurrency group; `README.md`, if it describes the index
+- [x] T026 [P] [US2] app: `scripts/tests/test_chunking.py`: a record with and without methods (`type` chunk), nested classes (`Outer.Inner`), overloads (distinct ids), the trivial rule (getter, setter, empty body, assign-only constructor dropped; a validating compact constructor kept), header content (package, declaration, fields; no imports), a parse error falling back to blocks with a warning, non-Java blocks at ≤~400 tokens, a method over 1,800 estimated tokens split into parts that each repeat the header, ids identical across two runs
+- [x] T027 [P] [US2] app: `scripts/tests/test_embedding.py` with a local `http.server` stub: ≤100 per batch, alignment and dimension checks, retry on 429 honouring `RetryInfo.retryDelay`/`Retry-After`, on 503, and on timeout; fail-fast on 400; after retries run out → non-zero exit and no `index.json` written
+- [x] T028 [US2] app: `scripts/chunking.py`: the tree-sitter chunker, trivial rule, headers, `type` chunks, blocks, splitting, ids (FR-001 to FR-006, FR-011) (depends on T002, T026)
+- [x] T029 [US2] app: `scripts/build_index.py`: collect → chunk → validate → batch embed with retry (replacing the `sys.exit` calls on transient errors) → write v2 with the v1 field names; `--dry-run` (chunk and count only); the FR-013 summary log (depends on T027, T028)
+- [x] T030 [P] [US2] app: `.github/workflows/index-codebase.yml`: `concurrency: {group: index-codebase-${{ github.ref }}, cancel-in-progress: true}`; a `pip install -r scripts/requirements-index.txt` step (FR-009, research R6)
+- [x] T031 [P] [US2] app: new `.github/workflows/index-script-tests.yml` (on `pull_request`, paths `scripts/**` and `.github/workflows/index-*.yml`), running `python -m unittest discover -s scripts/tests` (research R12)
+- [x] T032 [US2] app: `python scripts/build_index.py --dry-run` on `develop`'s tree; write the counts by kind into lambda `research.md` R1 as FR-003's reference
+- [x] T033 [US2] app: `CLAUDE.md`: index contract → v2 (link to lambda's contracts/index-v2.md), "one chunk per file" → method chunking, the stdlib-only paragraph → the approved pinned exception, the concurrency group; `README.md`, if it describes the index
 - [ ] T034 🔒 app: push `feat/method-chunking`, open a PR → **`develop`** (its own review still runs on the v1 index, as expected)
 - [ ] T035 🔒 app: before merging, record the AI Studio `gemini-embedding-001` usage counter; merge; confirm `index-codebase` logs 1 call and 0 retries; confirm the S3 object is `version 2`; record the counter again → research R4 (1 or N per batch) (user-assisted: AI Studio is a UI)
 
@@ -120,9 +120,9 @@ built on per-file queries.
 
 ## Phase 9: US6, measure the same way (P3)
 
-- [ ] T036 🔒 lambda: Groq budget probe (quickstart §6, research R9). Send prompts of increasing estimated size (e.g. 3,500 / 4,300 / 5,000) at `medium`; record prompt and output tokens and whether each was accepted. Pick the value, and record how many of PRs #3/#7/#8 it would skip onto Cerebras (5 RPM). Any change goes in a small PR → `develop`, then redeploy. **Then re-evaluate** whether the over-budget skip (FR-024) should also apply to reviews with no context, which today keep the pre-002 prompt and never skip (decision approved 2026-09-28: skip limited to v2 context until Groq's real limit is measured)
+- [ ] T036 🔒 lambda: Groq budget probe (quickstart §6, research R9). Send prompts of increasing estimated size (e.g. 3,500 / 4,300 / 5,000) at `medium`; record prompt and output tokens and whether each was accepted. Pick the value, and record how many of PRs #3/#7/#8 it would skip onto Cerebras (5 RPM). **Fix the unit mismatch first** (research R9): either express every provider budget in estimate units, `(TPM − reserve) × measured factor`, or divide the estimate by a per-provider factor (gpt-oss ≈ 1.44, Gemini ≈ 1.19) before comparing; the embedding split threshold keeps the uncorrected, pessimistic estimate. Any change goes in a small PR → `develop`, then redeploy. **Then re-evaluate** whether the over-budget skip (FR-024) should also apply to reviews with no context, which today keep the pre-002 prompt and never skip (decision approved 2026-09-28: skip limited to v2 context until Groq's real limit is measured)
 - [ ] T037 lambda: `specs/002-method-chunking/measure_review.py`: read `rag_query`/`rag_chunk`/`llm_attempt` lines from CloudWatch as the primary source for scores; recompute v2 scores by importing `retrieve_context.diff_queries` and `ranking` as a cross-check; report disagreements; add the score distribution (min, max, range, top-N vs rest, margin at the cut, standardised gap) over all candidates after exclusion (spec FR-033, SC-012); keep the `pr:N` selector and the section markers
-- [ ] T038 🔒 lambda: run baseline.md's procedure unchanged (empty commits on the three PR branches, all at once), score PR #3 against the 5-defect key, and write `specs/002-method-chunking/after.md` with the same tables (score distribution included) plus SC-002/005/007/010/011/012; open a docs PR → `develop`
+- [ ] T038 🔒 lambda: run baseline.md's procedure unchanged (`trigger_runs.py`, 3 runs per PR, one at a time, 60 s apart), score each PR #3 run against the 5-defect key (mean and per-defect rate), and write `specs/002-method-chunking/after.md` with the same tables (score distribution included) plus SC-002/005/007/010/011/012; open a docs PR → `develop`
 
 ---
 
