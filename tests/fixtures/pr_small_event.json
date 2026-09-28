@@ -1,0 +1,13 @@
+{
+  "prNumber": 3,
+  "repository": "Joaquimlagos/codereview-app",
+  "sha": "5c570e7",
+  "diffBucket": "codereview-artifacts",
+  "diffKey": "prs/3/5c570e7.diff",
+  "filesChanged": 1,
+  "linesAdded": 1,
+  "linesRemoved": 0,
+  "paths": [
+    "src/main/java/com/codereview/app/auth/AuthController.java"
+  ]
+}

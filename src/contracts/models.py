@@ -47,20 +47,40 @@ class RoutingDecision(BaseModel):
 
 
 class ContextChunk(BaseModel):
-    """One indexed file from codereview-app's RAG index, carried inline to InvokeLLM."""
+    """One retrieved chunk of codereview-app's RAG index, carried inline to InvokeLLM.
+
+    From a version 1 index, a chunk is a whole file and only `path`/`text` are set. From a
+    version 2 index it is one method, type or block (specs/002-method-chunking/data-model.md)
+    and also carries where it sits in the file, the header that makes it readable on its
+    own, and how it was ranked. Every v2 field is optional, so v1 output still validates;
+    RetrieveContext dumps with `exclude_none`, so a v1 chunk stays exactly `{path, text}`.
+    """
 
     path: str = Field(min_length=1)
+    # v1: the whole file. v2: the chunk body only — its header is carried separately so the
+    # prompt can print it once per file rather than once per chunk.
     text: str = Field(min_length=1)
+    id: str | None = None
+    start_line: int | None = None
+    end_line: int | None = None
+    header: str | None = None
+    # Best cosine similarity against any of the diff's per-file queries, and which changed
+    # file that query came from.
+    score: float | None = None
+    matched_query: str | None = None
 
 
 class RetrievedContext(BaseModel):
     pr_id: str = Field(min_length=1)
-    # The top-K most similar chunks; empty when the index could not be read.
+    # The top-ranked chunks; empty when the index could not be read.
     chunks: list[ContextChunk] = Field(default_factory=list)
     # False when index/develop/index.json is absent (e.g. no merge to develop yet): the run
     # still proceeds, InvokeLLM just reviews the diff without project context (FR-004's
     # "whatever context is available" Edge Case).
     index_available: bool = True
+    # Which index format the chunks came from (1 or 2) — InvokeLLM lays the prompt out
+    # differently for each. None only when no index was available.
+    index_version: int | None = None
 
 
 class CommentCategory(StrEnum):

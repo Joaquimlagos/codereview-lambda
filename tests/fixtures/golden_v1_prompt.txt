@@ -1,0 +1,91 @@
+You are reviewing a pull request diff.
+
+Respond with ONLY valid JSON — no markdown code fences, no preamble or trailing text — in exactly this shape:
+{"summary": "<2-3 sentence overview of the change>", "comments": [{"path": "<file path exactly as it appears in the diff>", "line": <line number, integer>, "body": "<the problem, and why it matters>", "category": "bug | security | performance | maintainability", "severity": "low | medium | high"}]}
+
+`comments` MAY be an empty list ("comments": []) when there is genuinely nothing to flag after actively checking — see the rubric below.
+
+Every entry in `comments` MUST be a real, actionable problem — never praise, never a description of what the code does. If you would only say something positive or merely restate the change, put that in `summary` instead and leave it out of `comments`.
+
+Each comment MUST have a `category`, one of:
+- "bug": incorrect logic, unhandled edge case, wrong error handling, broken behavior.
+- "security": credential/secret exposure, injection, auth/authorization bypass, unsafe deserialization, or similar.
+- "performance": unnecessary work in a hot path, an avoidable O(n^2) or worse, a leak.
+- "maintainability": duplication, a misleading name, missing test coverage for new behavior, a magic value that should be named or configurable.
+
+Each comment MUST also have a `severity`, one of "low", "medium", "high", reflecting how much it matters, not how confident you are.
+
+Actively check every category above against the diff before answering — do not default to an empty `comments` list just because nothing is obviously broken. A clean diff can still have a real, if minor, maintainability point; only return `comments: []` after genuinely checking and finding nothing in any category.
+
+`line` MUST be a line number on the file's state AFTER the change (the diff's "+" side), and MUST refer only to a line that actually appears in the diff below. Use each hunk's header (`@@ -old_start,old_count +new_start,new_count @@`) to work out line numbers: the first line following a hunk header is `new_start`, and the number increments for every following context line (starts with a space) or added line (starts with `+`). Removed lines (start with `-`) do not exist on the post-change side and MUST NOT be used as `line`.
+
+This change touches an authentication/security-sensitive path. In addition to the rubric above, specifically check for (as `category: "security"` comments where applicable):
+- Credentials, tokens, or passwords written to logs, error messages, or responses.
+- User enumeration or timing differences: does the response (message, status code, or latency) differ in a way that reveals whether a username/account exists, independent of whether the password was correct?
+- Signature, expiry, or clock-skew bypass: does any exception handler, broad catch, or relaxed tolerance cause an invalid, expired, or unverifiable token/credential to be accepted?
+- Missing authorization: is the caller's identity checked, but not whether that identity is *allowed* to do this specific action?
+- Hardcoded secrets, keys, or credentials in source.
+
+=== DIFF UNDER REVIEW ===
+diff --git a/src/main/java/com/codereview/app/auth/AuthController.java b/src/main/java/com/codereview/app/auth/AuthController.java
+index 74e02ab..2fafa9c 100644
+--- a/src/main/java/com/codereview/app/auth/AuthController.java
++++ b/src/main/java/com/codereview/app/auth/AuthController.java
+@@ -14,6 +14,7 @@ public class AuthController {
+     @PostMapping("/login")
+     public ResponseEntity<LoginResponse> login(@RequestBody LoginRequest request) {
+         if (!InMemoryUsers.isValid(request.username(), request.password())) {
++            LOGGER.warn("Login failed for {}", request.username());
+             return ResponseEntity.status(401).build();
+         }
+         return ResponseEntity.ok(new LoginResponse(jwtValidator.generateToken(request.username())));
+
+
+=== ADDITIONAL PROJECT CONTEXT ===
+Existing files from the repository, retrieved for reference only. They are NOT part of the change under review — do not report issues in them.
+
+--- src/main/java/com/codereview/app/auth/AuthController.java ---
+package com.codereview.app.auth;
+
+@RestController
+@RequestMapping("/auth")
+public class AuthController {
+
+    private final JwtValidator jwtValidator;
+
+    public AuthController(JwtValidator jwtValidator) {
+        this.jwtValidator = jwtValidator;
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<LoginResponse> login(@RequestBody LoginRequest request) {
+        if (!InMemoryUsers.isValid(request.username(), request.password())) {
+            return ResponseEntity.status(401).build();
+        }
+        return ResponseEntity.ok(new LoginResponse(jwtValidator.generateToken(request.username())));
+    }
+}
+
+
+--- src/main/java/com/codereview/app/auth/InMemoryUsers.java ---
+package com.codereview.app.auth;
+
+final class InMemoryUsers {
+
+    private static final Map<String, String> CREDENTIALS = Map.of("admin", "admin123");
+
+    private InMemoryUsers() {
+    }
+
+    static boolean isValid(String username, String password) {
+        return CREDENTIALS.getOrDefault(username, "").equals(password);
+    }
+}
+
+
+--- src/main/java/com/codereview/app/auth/LoginResponse.java ---
+package com.codereview.app.auth;
+
+public record LoginResponse(String token) {
+}
+

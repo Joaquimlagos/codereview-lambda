@@ -134,3 +134,106 @@ def stub_llm_router() -> StubLlmRouter:
 @pytest.fixture
 def stub_github_client() -> StubGitHubClient:
     return StubGitHubClient()
+
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+@pytest.fixture
+def pr_small_diff() -> str:
+    """A one-file diff inserting a log line inside AuthController.login (old lines 16/17)."""
+    return (FIXTURES / "pr_small.diff").read_text(encoding="utf-8")
+
+
+@pytest.fixture
+def pr_small_event() -> dict:
+    return json.loads((FIXTURES / "pr_small_event.json").read_text(encoding="utf-8"))
+
+
+def _v2_chunk(path, kind, symbol, start, end, header, text, vec, part=None):
+    method = f".{symbol[1]}" if symbol and symbol[1] else ""
+    chunk_id = (
+        f"{path}#L{start}-{end}"
+        if kind == "block"
+        else f"{path}#{symbol[0]}{method}:{start}-{end}"
+    )
+    if part:
+        chunk_id += f"#part-{part[0]}"
+    return {
+        "id": chunk_id,
+        "path": path,
+        "kind": kind,
+        "symbol": {"type": symbol[0], "method": symbol[1]} if symbol else None,
+        "startLine": start,
+        "endLine": end,
+        "part": {"index": part[0], "count": part[1]} if part else None,
+        "header": header,
+        "text": text,
+        "vector": vec,
+    }
+
+
+@pytest.fixture
+def rag_index_v2() -> dict:
+    """A version 2 index (specs/002-method-chunking/contracts/index-v2.md) for the same code
+    as `pr_small_diff`. Against the stub's default query vector [1, 0, ...] the chunks rank:
+
+        login (1.00, but overlaps the diff's changed lines -> excluded)
+        > isValid (~0.995) > JwtValidator part 1 (0.80) > LoginResponse type (~0.71)
+        > JwtValidator part 2 (~0.71, second on ties by index order) > TaskService (~0.10)
+        > pom.xml block (0.0)
+    """
+    auth = "src/main/java/com/codereview/app/auth/"
+    auth_header = "package com.codereview.app.auth;\n\n"
+    return {
+        "version": 2,
+        "branch": "develop",
+        "commit": "88801e485be2a743cf44006830e2740e1345cf76",
+        "generatedAt": "2026-09-28T12:00:00Z",
+        "model": EMBEDDING_MODEL,
+        "dimensions": EMBEDDING_DIMENSIONS,
+        "chunks": [
+            _v2_chunk(
+                "pom.xml", "block", None, 1, 12, "", "<project>...</project>", vector(0.0, 1.0)
+            ),
+            _v2_chunk(
+                f"{auth}AuthController.java", "method", ("AuthController", "login"), 14, 20,
+                auth_header + "@RestController\npublic class AuthController {\n"
+                "    private final JwtValidator jwtValidator;",
+                "public ResponseEntity<LoginResponse> login(LoginRequest request) { ... }",
+                vector(1.0),
+            ),
+            _v2_chunk(
+                f"{auth}InMemoryUsers.java", "method", ("InMemoryUsers", "isValid"), 10, 12,
+                auth_header + "final class InMemoryUsers {\n"
+                "    private static final Map<String, String> CREDENTIALS = Map.of();",
+                "static boolean isValid(String username, String password) { ... }",
+                vector(0.99, 0.1),
+            ),
+            _v2_chunk(
+                f"{auth}JwtValidator.java", "method", ("JwtValidator", "isValid"), 40, 60,
+                auth_header + "public class JwtValidator {",
+                "public boolean isValid(String token) { // part 1",
+                vector(0.8, 0.6), part=(1, 2),
+            ),
+            _v2_chunk(
+                f"{auth}LoginResponse.java", "type", ("LoginResponse", None), 3, 4,
+                auth_header + "public record LoginResponse(String token) {",
+                "public record LoginResponse(String token) {\n}",
+                vector(0.7, 0.7),
+            ),
+            _v2_chunk(
+                f"{auth}JwtValidator.java", "method", ("JwtValidator", "isValid"), 61, 75,
+                auth_header + "public class JwtValidator {",
+                "    // part 2 }",
+                vector(0.7, 0.7), part=(2, 2),
+            ),
+            _v2_chunk(
+                "src/main/java/com/codereview/app/tasks/TaskService.java", "method",
+                ("TaskService", "findAll"), 8, 10,
+                "package com.codereview.app.tasks;\n\n@Service\npublic class TaskService {",
+                "public List<Task> findAll() { ... }",
+                vector(0.1, 0.99),
+            ),
+        ],
+    }
