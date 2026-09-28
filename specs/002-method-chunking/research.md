@@ -110,8 +110,9 @@ cannot be settled by reading documentation.
   page shows the **peak over 28 days**, not the day's total, so it cannot answer this.
   Compare the **daily chart** of `gemini-embedding-001` requests for the day of the first
   real v2 build against the days around it. A jump of ~1 per build means per call, a jump of
-  ~41 means per input. Write the result here. The design is sized for the worst case (N):
-  41 inputs per build today, plus K per review (one per changed file).
+  ~41 means per input. **Answered in R16: per input** (27 → 68 RPD for a 41-chunk build
+  in one call). The worst case the design was sized for is the real one: 41 requests per
+  build today, plus K per review (one per changed file).
 - **Batches are limited by count only, not by tokens.** The 30,000 TPM limit (R15) is the
   constraint that binds first: today's whole index is ~5,100 estimated tokens in one call,
   but a batch of 100 chunks at the 1,800-token split threshold would be ~180,000. See T041.
@@ -390,10 +391,26 @@ replace the estimates used earlier in this file and in research 001 for Google's
   without error, which confirms the reversed-deploy-order safety net on the real object.
 - **Rollback** is available: the previous v1 object is kept as S3 version
   `Gbq3QxTKViw51IFuKCo5BwzgPQs_zodO` (contracts/index-v2.md, "Rollback").
-- **Quota accounting (R4)**, from the AI Studio daily view of `gemini-embedding-001`
-  requests (RPD column, 1-day interval): **27 before the merge**; after the merge:
-  *pending, AI Studio refreshes 15–30 min later*. A rise of ~1 means a batch counts as one
-  request, ~41 means one per input. The last review before the merge was PR #16's own
-  (execution `25ae08de`, 19:27Z, one v1 query embedding), and none ran after it, so if the
-  "before" reading was taken after 19:28Z, the difference is the build alone.
+- **Quota accounting (R4): each input counts as one request.** From the AI Studio daily
+  view of `gemini-embedding-001` requests (RPD column, 1-day interval): **27** at 20:01Z,
+  before the merge, and **68** after. 68 = 27 + 41, the index's chunk count, although the
+  build made a single `batchEmbedContents` call. The last review before the merge was PR
+  #16's own (execution `25ae08de`, 19:27Z), before the 20:01Z reading, and none ran after it,
+  so the difference is the build alone. Batching saves wall-clock time (the 9.4× of the
+  feasibility test) and HTTP round trips, **not quota**.
+- **Consequences**:
+  - **Every full index build costs 41 of the 1,000 requests per day**, and the build runs
+    on every push to `develop`. Today that is about 24 builds a day before the quota runs
+    out, ignoring reviews.
+  - **Reviews count per changed file too**: RetrieveContext's v2 query batch spends one
+    request per changed file, so 11 for a PR like #8 and 5 for #3 or #7.
+  - **Incremental indexing becomes necessary as the project grows.** At 500 chunks, one full
+    rebuild would spend half the daily quota; at 1,000, all of it. Re-embedding only the
+    chunks whose content changed (reusing stable ids and a content hash per chunk) removes
+    that scaling. See the backlog in tasks.md.
+  - **T041 must also cap chunks per minute.** Since each input is one request, a single
+    batch of up to 100 inputs is up to 100 requests, which is the whole 100 RPM limit in
+    one call. T041 caps each batch by estimated tokens (under 30,000 TPM) *and* by input
+    count per minute (under 100 RPM), and waits between batches when either budget for
+    the current minute is spent.
 

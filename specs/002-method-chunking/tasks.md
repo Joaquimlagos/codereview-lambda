@@ -135,7 +135,11 @@ built on per-file queries.
 
 ## Follow-ups (not required for this feature)
 
-- [ ] T041 app: **token-bounded embedding batches** in `scripts/build_index.py` (research R4, R15). Besides the 100-input cap, cap each `batchEmbedContents` call at an estimated token total safely under the 30,000 TPM limit (e.g. 25,000), and when the next batch would exceed what is left of the current minute's budget, wait for the window to roll over instead of relying on 429 retries. Add a stub-server test with oversized chunks that asserts the per-call token cap and the wait. Not needed at today's size (41 chunks, ~5,100 estimated tokens, one call); needed before the indexed code grows toward ~30,000 estimated tokens
+- [ ] T041 app: **rate-bounded embedding batches** in `scripts/build_index.py` (research R4, R15, R16). Each input counts as one request (R16), so besides the 100-input cap per call, keep **both** of the current minute's budgets: estimated tokens safely under 30,000 TPM (e.g. 25,000) **and** inputs safely under 100 RPM (e.g. 90). When the next batch would exceed what is left of either, wait for the window to roll over instead of relying on 429 retries. Add stub-server tests with many small chunks (the RPM cap) and with oversized chunks (the TPM cap) that assert the per-minute caps and the wait. Not needed at today's size (41 chunks, ~5,100 estimated tokens, one call); needed before the index approaches ~90 chunks or ~25,000 estimated tokens
+
+### Backlog (no task yet)
+
+- **Incremental indexing** (research R16). Every input costs one of the 1,000 embedding requests per day, so a full rebuild on every push to `develop` stops scaling: at 500 chunks one build spends half the daily quota. Re-embed only chunks whose content changed since the published index (stable chunk ids plus a content hash per chunk), and copy the other vectors forward. It needs the previous index as input and a rule for chunks whose id changed because their lines moved.
 
 ---
 
