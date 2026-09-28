@@ -139,6 +139,13 @@ built on per-file queries.
 
 ### Backlog (no task yet)
 
+- **Let the high tier decide something that affects the review.** Since 2026-09-28 the high
+  tier runs the same model and reasoning effort as medium (001 research, "High tier:
+  Cerebras first, Gemini last"; PR #16), so the complexity classification no longer changes
+  who answers or how hard it thinks. It could decide something else the review depends on,
+  such as more RAG context for high-tier PRs (a larger TOP_N or CONTEXT_TOKEN_CAP) or a
+  larger prompt budget, measured the same way as 002 (3 runs per PR).
+
 - **Incremental indexing** (research R16). Every input costs one of the 1,000 embedding requests per day, so a full rebuild on every push to `develop` stops scaling: at 500 chunks one build spends half the daily quota. Re-embed only chunks whose content changed since the published index (stable chunk ids plus a content hash per chunk), and copy the other vectors forward. It needs the previous index as input and a rule for chunks whose id changed because their lines moved.
 
 ---
