@@ -147,8 +147,14 @@ diff; a ~6,500-token diff timed out entirely in production), and Groq's 8,000 TP
 rejects that same large diff outright — Cerebras' 30,000 TPM ceiling covers exactly that gap.
 The `high` Gemini call is also much slower than low/medium reasoning (measured up to 63 s vs.
 9–31 s at `low`), so it gets its own longer timeout, and with three fallback attempts instead
-of two the Lambda's overall timeout is 230 s rather than 180 s. See research.md's "High-tier
-reasoning: why Gemini, not Groq" and "Cerebras as a third fallback provider".
+of two the Lambda's overall timeout is 230 s rather than 180 s. This only changes
+`invoke-llm`'s own Lambda timeout, not `codereview-infra`'s Step Functions `Retry` (still
+`MaxAttempts: 1`, `IntervalSeconds: 30`): the worst case for a full review attempt is two
+230 s Lambda executions (the original attempt, then the one Step Functions retry) plus the
+30 s interval between them, roughly `2 × 230 s + 30 s ≈ 490 s` (about 8.2 minutes) before the
+step gives up and surfaces the failure — still fine for a non-blocking advisory check. See
+research.md's "High-tier reasoning: why Gemini, not Groq" and "Cerebras as a third fallback
+provider".
 
 ## Review quality
 
