@@ -1,0 +1,12 @@
+diff --git a/src/main/java/com/codereview/app/auth/AuthController.java b/src/main/java/com/codereview/app/auth/AuthController.java
+index 74e02ab..2fafa9c 100644
+--- a/src/main/java/com/codereview/app/auth/AuthController.java
++++ b/src/main/java/com/codereview/app/auth/AuthController.java
+@@ -14,6 +14,7 @@ public class AuthController {
+     @PostMapping("/login")
+     public ResponseEntity<LoginResponse> login(@RequestBody LoginRequest request) {
+         if (!InMemoryUsers.isValid(request.username(), request.password())) {
++            LOGGER.warn("Login failed for {}", request.username());
+             return ResponseEntity.status(401).build();
+         }
+         return ResponseEntity.ok(new LoginResponse(jwtValidator.generateToken(request.username())));

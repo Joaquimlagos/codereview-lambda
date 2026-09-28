@@ -2,14 +2,21 @@
 
 Only invoked when RouteModel set needsContext. Reads the embedding index published by
 codereview-app (`index/develop/index.json` in the same artifacts bucket the diff lives in),
-embeds the PR diff as a retrieval *query*, and returns the TOP_K most cosine-similar chunks.
+embeds the PR diff as retrieval *queries*, and returns the most cosine-similar chunks.
 
-Index contract (owned by codereview-app's scripts/build_index.py, mirrored in
-specs/001-pr-review-pipeline/contracts/step-io-contracts.md):
+Two index versions are read (index contract owned by codereview-app's
+scripts/build_index.py; see specs/002-method-chunking/contracts/index-v2.md):
 
-    {"version": 1, "branch": "develop", "commit": "<sha>", "generatedAt": "<iso8601>",
-     "model": "gemini-embedding-001", "dimensions": 768,
-     "chunks": [{"path": "src/...", "text": "<file contents>", "vector": [768 floats]}]}
+- **version 1** — one chunk per whole file. Handled exactly as before 002: the whole diff is
+  one query, and the TOP_K files come back as `{path, text}`. Kept byte-for-byte so that
+  deploying this Lambda before codereview-app publishes version 2 changes nothing
+  (tests/unit/test_retrieve_context_versions.py holds it to a golden output).
+- **version 2** — one chunk per method, type or block, each with its location and header.
+  Each changed file's diff is its own query (diff_queries.py), chunks overlapping the diff's
+  changed lines are left out, and the top chunks by best similarity are returned and logged
+  (ranking.py).
+
+Any other version fails the run, before any embedding call.
 
 `model` and `dimensions` are verified against this Lambda's own embedding client before any
 scoring: vectors produced by a different model, or truncated to a different dimensionality,
@@ -19,7 +26,6 @@ yet — so that degrades gracefully to "no context" instead of failing the run.
 """
 
 import json
-import math
 
 from contracts.models import ContextChunk, PullRequestEvent, RetrievedContext
 from integrations.config import require_env
@@ -27,6 +33,9 @@ from integrations.embeddings import EmbeddingClient, GeminiEmbeddingClient
 from integrations.logging_config import configure_project_logging
 from integrations.secrets import resolve_api_key
 from integrations.storage import S3Storage, Storage, StorageError
+from retrieve_context.diff_queries import changed_lines, split_queries
+from retrieve_context.ranking import cosine_similarity as _cosine_similarity
+from retrieve_context.ranking import log_ranking, rank
 
 # Raises this project's own loggers to INFO (root logger and third-party loggers
 # untouched) — see integrations/logging_config.py.
@@ -34,7 +43,9 @@ configure_project_logging()
 
 # Published by codereview-app's index-codebase.yml workflow on every push to develop.
 INDEX_KEY = "index/develop/index.json"
+# Version 1 only: how many whole files to return. Version 2 uses ranking.TOP_N chunks.
 TOP_K = 3
+SUPPORTED_INDEX_VERSIONS = (1, 2)
 
 # Same secret and resolution pattern InvokeLLM uses — this function needs the Gemini key to
 # embed the diff (see infra/iam_retrieve_context.tf for the matching IAM grant).
@@ -97,24 +108,20 @@ def _verify_index_compatibility(
         )
 
 
-def _cosine_similarity(vector_a: list[float], vector_b: list[float]) -> float:
-    """Plain-Python cosine similarity — no numpy: at a few hundred 768-float vectors per run
-    this is tens of milliseconds, and skipping numpy keeps the other three Lambdas from
-    carrying its ~57 MB of vendored OpenBLAS in the shared deployment zip for no benefit.
-
-    A zero-norm vector scores 0 rather than raising a ZeroDivisionError — such a vector is
-    degenerate and should simply never rank, not blow up the whole retrieval.
-    """
-    dot_product = sum(a * b for a, b in zip(vector_a, vector_b, strict=True))
-    norm_a = math.sqrt(sum(a * a for a in vector_a))
-    norm_b = math.sqrt(sum(b * b for b in vector_b))
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return dot_product / (norm_a * norm_b)
+def _index_version(index: dict) -> int:
+    # Indexes published before `version` existed are version 1 by definition.
+    version = index.get("version", 1)
+    if type(version) is not int or version not in SUPPORTED_INDEX_VERSIONS:
+        raise IndexCompatibilityError(
+            f"Index declares version {version!r}; this function reads versions "
+            f"{SUPPORTED_INDEX_VERSIONS}. Deploy a RetrieveContext that understands it, or "
+            "restore a supported index (specs/002-method-chunking/contracts/index-v2.md)."
+        )
+    return version
 
 
 def _top_chunks(chunks: list[dict], query_vector: list[float], top_k: int) -> list[ContextChunk]:
-    """The `top_k` chunks with the highest cosine similarity to `query_vector`."""
+    """Version 1: the `top_k` chunks with the highest cosine similarity to `query_vector`."""
     scored = [(_cosine_similarity(chunk["vector"], query_vector), chunk) for chunk in chunks]
     scored.sort(key=lambda pair: pair[0], reverse=True)
     return [ContextChunk(path=chunk["path"], text=chunk["text"]) for _, chunk in scored[:top_k]]
@@ -137,9 +144,13 @@ def retrieve_context(
     except StorageError:
         # No index yet (nothing merged to develop): review the diff without project context
         # rather than failing the whole run.
-        return RetrievedContext(pr_id=pr_id, chunks=[], index_available=False).model_dump()
+        return RetrievedContext(pr_id=pr_id, chunks=[], index_available=False).model_dump(
+            exclude_none=True
+        )
 
     index = json.loads(index_raw)
+    # Checked before the diff is even read: an unreadable index must not cost an API call.
+    version = _index_version(index)
 
     # A diff that cannot be found/read MUST fail the run visibly (spec Edge Case).
     diff_text = storage.get_text(pr_event.diff_key)
@@ -151,13 +162,50 @@ def retrieve_context(
         raise EmptyDiffError(
             f"Diff at {pr_event.diff_key!r} in bucket {pr_event.diff_bucket!r} is empty"
         )
+
+    if version == 1:
+        chunks = _retrieve_v1(index, diff_text, embedding_client)
+    else:
+        chunks = _retrieve_v2(index, diff_text, embedding_client, pr_event.pr_number)
+    context = RetrievedContext(
+        pr_id=pr_id, chunks=chunks, index_available=True, index_version=version
+    )
+    # exclude_none: a v1 chunk stays exactly {path, text}, as before version 2 existed.
+    return context.model_dump(exclude_none=True)
+
+
+def _retrieve_v1(
+    index: dict, diff_text: str, embedding_client: EmbeddingClient
+) -> list[ContextChunk]:
+    """Unchanged pre-002 behaviour: the whole diff as one query, top-K whole files."""
     query_vector = embedding_client.embed_query(diff_text)
-
     _verify_index_compatibility(index, embedding_client, query_vector)
+    return _top_chunks(index.get("chunks") or [], query_vector, TOP_K)
 
-    chunks = _top_chunks(index.get("chunks") or [], query_vector, TOP_K)
-    context = RetrievedContext(pr_id=pr_id, chunks=chunks, index_available=True)
-    return context.model_dump()
+
+def _retrieve_v2(
+    index: dict, diff_text: str, embedding_client: EmbeddingClient, pr_number: int
+) -> list[ContextChunk]:
+    queries = split_queries(diff_text)
+    # One batch call for every changed file (more only past 100 queries).
+    query_vectors = embedding_client.embed_queries([query.text for query in queries])
+    _verify_index_compatibility(index, embedding_client, query_vectors[0])
+
+    ranking = rank(index.get("chunks") or [], queries, query_vectors, changed_lines(diff_text))
+    log_ranking(pr_number, index, queries, ranking)
+    return [
+        ContextChunk(
+            path=ranked.chunk["path"],
+            text=ranked.chunk["text"],
+            id=ranked.chunk.get("id"),
+            start_line=ranked.chunk.get("startLine"),
+            end_line=ranked.chunk.get("endLine"),
+            header=ranked.chunk.get("header"),
+            score=round(ranked.score, 4),
+            matched_query=ranked.matched_query,
+        )
+        for ranked in ranking.selected
+    ]
 
 
 def handler(event: dict, context=None) -> dict:

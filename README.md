@@ -25,7 +25,8 @@ Serverless harness that routes pull requests to LLM models (Groq, Gemini) by com
                        ├─ needsContext?
                        │      ├─ yes ─▶ 2. RetrieveContext
                        │      │            RAG: embeds the diff, ranks the project's index
-                       │      │            (S3 index/), returns the 3 closest files
+                       │      │            (S3 index/): the 3 closest files (index v1) or
+                       │      │            the 8 closest methods (index v2)
                        │      └─ no  ─▶ (skipped)
                        │
                        ├─ 3. InvokeLLM
@@ -261,7 +262,10 @@ groups.
   targeting another branch is still reviewed against develop's snapshot of the codebase, and
   a PR opened before develop was ever indexed is reviewed with no project context at all
   (`indexAvailable: false` — a deliberate graceful degradation, not a failure).
-- **Retrieval is whole-file, top-3, single-pass.** Each index entry is one whole file, ranked
-  by cosine similarity against the embedded diff; there is no sub-file chunking, no reranking
-  step, and no token budgeting beyond the fixed `TOP_K = 3`. A large retrieved file consumes
-  prompt budget in full.
+- **Retrieval granularity depends on the published index.** With a version 1 index (one
+  entry per whole file), retrieval is whole-file, top-3, single-pass, exactly as before; a
+  large retrieved file consumes prompt budget in full. With a version 2 index
+  ([`specs/002-method-chunking`](specs/002-method-chunking)), each changed file's diff is its
+  own query, entries are methods with a context header, code the diff already changes is left
+  out, and the top 8 are packed into each provider's prompt budget. There is still no
+  reranking step in either version.

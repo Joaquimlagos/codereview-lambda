@@ -77,7 +77,15 @@ that branch, not this Lambda.
 **Also read** — the RAG index at `index/develop/index.json` in the *same* bucket the event's
 `diffBucket` names (codereview-infra's `s3.tf` provisions one artifacts bucket split by prefix:
 `prs/` for diffs, `index/` for the index). The index object's shape is owned by codereview-app's
-`scripts/build_index.py`, which is the authoritative source for it:
+`scripts/build_index.py`, which is the authoritative source for it. Two versions are read:
+
+- **version 1**: one chunk per whole file, shaped as below.
+- **version 2**: one chunk per method, type or block, with an id, a line range and a header.
+  It keeps the v1 field names `path`, `text` and `vector`. Its full shape is in
+  [002's index contract](../../002-method-chunking/contracts/index-v2.md).
+
+Any other `version` is a hard failure (`IndexCompatibilityError`), raised before the diff is
+embedded. An index with no `version` field is read as version 1.
 ```json
 {
   "version": 1, "branch": "develop", "commit": "string", "generatedAt": "string",
@@ -106,11 +114,18 @@ incomplete write to S3 — and MUST fail the run visibly like any other unreadab
 {
   "pr_id": "string",
   "chunks": [{ "path": "string", "text": "string" }],
-  "index_available": true
+  "index_available": true,
+  "index_version": 1
 }
 ```
-`chunks` MAY be `[]`, and holds at most `TOP_K` (3) entries, ranked by cosine similarity against
-the embedded diff. `index_available` is `false` only in the missing-index case above.
+With a **version 1** index, `chunks` MAY be `[]` and holds at most `TOP_K` (3) whole files,
+ranked by cosine similarity against the whole diff embedded as one query. This is exactly the
+pre-002 output, plus `index_version`. With a **version 2** index, it holds at most `TOP_N` (8)
+chunks that also carry `id`, `start_line`, `end_line`, `header`, `score` and
+`matched_query`. Each changed file's diff is its own query, and chunks overlapping lines the
+diff changes are left out ([002's output contract](../../002-method-chunking/contracts/retrieve-context-v2.md),
+which also defines the `rag_query`/`rag_chunk` JSON log lines). `index_available` is `false`,
+and `index_version` absent, only in the missing-index case above.
 
 ## InvokeLLM
 
@@ -148,6 +163,14 @@ why Gemini, not Groq"). The entry that answered is reported in `model_used` (e.g
 `"groq:openai/gpt-oss-120b:low"`), and `fell_back` is `true` when it wasn't the tier's first
 choice.
 
+**Context budget** (version 2 context only): each attempt's prompt is sized to that
+provider's budget (`PROMPT_TOKEN_BUDGET` in `llm_router.py`). Retrieved chunks are packed
+best-first into what the instructions and diff leave of it, capped at `CONTEXT_TOKEN_CAP`. An
+attempt whose instructions and diff alone exceed the budget is skipped without calling the
+provider, and logged. Version 1 context, and reviews with no context, keep the pre-002 prompt
+unchanged. Every attempt logs one `llm_attempt` JSON line
+([002's output contract](../../002-method-chunking/contracts/retrieve-context-v2.md)).
+
 **Errors** (the Lambda `errorType` Step Functions sees):
 
 - `LlmTransientError`: every entry failed, at least one of them transiently (HTTP
@@ -158,6 +181,10 @@ choice.
   name MUST NOT change; each retry re-runs the whole list.
 - `LlmModelNotFoundError`: every entry's model is gone (HTTP 404, or Groq's
   `model_not_found`/`model_decommissioned`). A configuration problem; not retried.
+- `LlmPromptTooLargeError`: every entry was skipped because the instructions and diff alone
+  exceed each provider's prompt budget (version 2 context only). The diff will be just as
+  large on a retry, so it is not retried (`codereview-infra`'s `Retry` matches only
+  `LlmTransientError`).
 - `LlmRouterError`: a model failed permanently (400, 401, 403, a blocked response, or an empty
   one that wasn't cut off by the output limit). An empty answer caused by the output limit
   (Groq `finish_reason: "length"`, Gemini `finishReason: "MAX_TOKENS"`) is not permanent: the
