@@ -29,7 +29,8 @@ Amends [001's step I/O contract](../../001-pr-review-pipeline/contracts/step-io-
   lines overlap the diff's changed lines are never included (FR-020).
 - With a v1 index: `index_version: 1`, at most 3 chunks, and only `path`/`text` set.
   This is byte-for-byte today's content.
-- `index_version` is `null` only when `index_available` is `false`.
+- `index_version` is absent only when `index_available` is `false`. The output is dumped
+  with `exclude_none`, which is also what keeps a v1 chunk exactly `{path, text}`.
 
 ## Prompt layout (v2), built by InvokeLLM per model attempt
 
@@ -44,9 +45,13 @@ package com.codereview.app.auth;
 final class InMemoryUsers {
     private static final Map<String, String> CREDENTIALS = …;
 
-    // lines 19-21
+    [lines 19-21]
     static boolean isValid(String username, String password) { … }
 ```
+
+The layout is chosen from the chunks themselves: chunks that carry `start_line` (v2) are
+grouped. Whole files (v1) keep the pre-002 flat layout byte for byte
+(`tests/unit/test_build_prompt_grouped.py` holds it to a golden prompt).
 
 Files appear in order of their best chunk's score. Inside a file, chunks are in line order
 and the header is printed once. The `=== DIFF UNDER REVIEW ===` and
@@ -60,7 +65,8 @@ One JSON object per line, emitted through the module logger at INFO. Every line 
 
 RetrieveContext, once per run:
 ```json
-{"event": "rag_query", "pr": 3, "index_version": 2, "index_commit": "88801e4…", "queries": 5, "query_parts_split": 0, "excluded_overlapping": 4, "candidates": 55}
+{"event": "rag_query", "pr": 3, "index_version": 2, "index_commit": "88801e4…", "queries": 5, "query_parts_split": 0, "excluded_overlapping": 4, "candidates": 46, "selected": 8,
+ "scores": {"min": 0.61, "max": 0.84, "mean_selected": 0.80, "min_selected": 0.78, "mean_rest": 0.70, "max_rest": 0.77, "margin_at_cut": 0.01, "standardised_gap": 2.4}}
 ```
 RetrieveContext, once per selected chunk, in rank order:
 ```json
@@ -70,7 +76,16 @@ InvokeLLM, once per model attempt:
 ```json
 {"event": "llm_attempt", "pr": 3, "model": "groq:openai/gpt-oss-120b:medium", "budget": 4300, "estimated_prompt": 3950, "context_chunks_kept": 5, "context_chunks_dropped": 3, "skipped": false}
 ```
-With `"skipped": true`, the client was not called (FR-024).
+With `"skipped": true`, the client was not called (FR-024). A skip is also logged as a
+plain-text warning (`Skipping <model> for PR <n>: …`). If every model in the tier was
+skipped, the run fails with `LlmPromptTooLargeError`. That error is deliberately not retried:
+codereview-infra's Retry matches `LlmTransientError` by name only.
+
+`scores` in `rag_query` is the distribution over all candidates scored after exclusion. The
+"after" measurement reads it from here (spec FR-033, SC-012). RetrieveContext's v1 path logs
+no `rag_*` lines. InvokeLLM logs `llm_attempt` on every attempt, v1 included; for v1 context
+(and for reviews with no context) the line is informational only, since packing and skipping
+apply to located (v2) context alone. That keeps the Lambda-first deploy neutral (data-model.md).
 
 The existing plain-text lines (`… answered: … usage=…`, `Model … failed for PR …`) are
 kept unchanged. The measurement script reads the provider's `prompt_tokens` from them.

@@ -24,15 +24,15 @@ built on per-file queries.
 
 - [ ] T001 🔒 app: create branch `feat/method-chunking` from `origin/develop` (no push until T034)
 - [ ] T002 [P] app: add `scripts/requirements-index.txt` pinning `tree-sitter==0.26.0` and `tree-sitter-java==0.23.5` (research R1)
-- [ ] T003 [P] lambda: before any code change, capture golden fixtures from the current code: `tests/fixtures/index_v1_small.json` (4 files, fixed vectors), and the current `retrieve_context` output and `build_prompt` output for it, as `tests/fixtures/golden_v1_context.json` and `tests/fixtures/golden_v1_prompt.txt` (FR-015)
+- [x] T003 [P] lambda: before any code change, capture golden fixtures from the current code: `tests/fixtures/index_v1_small.json` (4 files, fixed vectors), and the current `retrieve_context` output and `build_prompt` output for it, as `tests/fixtures/golden_v1_context.json` and `tests/fixtures/golden_v1_prompt.txt` (FR-015)
 
 ---
 
 ## Phase 2: Foundational (Lambda, blocks all Lambda stories)
 
-- [ ] T004 [P] lambda: `src/contracts/token_estimate.py`: `estimate_tokens(text) = ceil(len(text)/3.0)`, `SPLIT_THRESHOLD_TOKENS = 1800`, with a docstring citing baseline.md's measured ratios; tests in `tests/unit/test_token_estimate.py`
-- [ ] T005 [P] lambda: `src/contracts/models.py`: optional `id`, `start_line`, `end_line`, `header`, `score`, `matched_query` on `ContextChunk`; optional `index_version` on `RetrievedContext` (data-model.md); extend `tests/contract/test_retrieve_context_contract.py` so both the v1 and v2 shapes validate
-- [ ] T006 lambda: `src/integrations/embeddings.py`: `embed_queries(texts) -> list[vector]` on `EmbeddingClient` via `batchEmbedContents`, ≤100 per call, with count and dimension validation (research R4); `StubEmbeddingClient.embed_queries` returns per-text vectors (a mapping or callable) and records calls; tests in `tests/unit/test_embeddings.py` (payload shape, 150 texts → 2 calls, misaligned response → `EmbeddingError`)
+- [x] T004 [P] lambda: `src/contracts/token_estimate.py`: `estimate_tokens(text) = ceil(len(text)/3.0)`, `SPLIT_THRESHOLD_TOKENS = 1800`, with a docstring citing baseline.md's measured ratios; tests in `tests/unit/test_token_estimate.py`
+- [x] T005 [P] lambda: `src/contracts/models.py`: optional `id`, `start_line`, `end_line`, `header`, `score`, `matched_query` on `ContextChunk`; optional `index_version` on `RetrievedContext` (data-model.md); extend `tests/contract/test_retrieve_context_contract.py` so both the v1 and v2 shapes validate
+- [x] T006 lambda: `src/integrations/embeddings.py`: `embed_queries(texts) -> list[vector]` on `EmbeddingClient` via `batchEmbedContents`, ≤100 per call, with count and dimension validation (research R4); `StubEmbeddingClient.embed_queries` returns per-text vectors (a mapping or callable) and records calls; tests in `tests/unit/test_embeddings.py` (payload shape, 150 texts → 2 calls, misaligned response → `EmbeddingError`)
 
 **Checkpoint**: shared pieces in place; the existing suite is still green.
 
@@ -43,9 +43,9 @@ built on per-file queries.
 **Goal**: RetrieveContext reads v1 exactly as today and recognises v2; a v1-only reader survives a v2 index.
 **Independent test**: spec US5; quickstart §1.
 
-- [ ] T007 [P] [US5] lambda: `tests/unit/test_retrieve_context_versions.py`: v1 fixture → output equals `golden_v1_context.json` plus `index_version: 1`; `version: 3` → `IndexCompatibilityError`; a missing `version` field → treated as v1 (today's indexes have it, but it stays defensive)
-- [ ] T008 [P] [US5] lambda: `tests/fixtures/index_v2_small.json` per contracts/index-v2.md (two classes, a record `type` chunk, a split method, a `pom.xml` block), plus `tests/contract/test_index_v2_backcompat.py`: today's `_top_chunks` ranks this v2 fixture without error (FR-029 reverse order)
-- [ ] T009 [US5] lambda: `src/retrieve_context/handler.py`: dispatch on `version`; move today's logic unchanged into `_retrieve_v1`; route v2 to a `_retrieve_v2` stub for now; set `index_version` (depends on T005, T007, T008)
+- [x] T007 [P] [US5] lambda: `tests/unit/test_retrieve_context_versions.py`: v1 fixture → output equals `golden_v1_context.json` plus `index_version: 1`; `version: 3` → `IndexCompatibilityError`; a missing `version` field → treated as v1 (today's indexes have it, but it stays defensive)
+- [x] T008 [P] [US5] lambda: `tests/fixtures/index_v2_small.json` per contracts/index-v2.md (two classes, a record `type` chunk, a split method, a `pom.xml` block), plus `tests/contract/test_index_v2_backcompat.py`: today's `_top_chunks` ranks this v2 fixture without error (FR-029 reverse order)
+- [x] T009 [US5] lambda: `src/retrieve_context/handler.py`: dispatch on `version`; move today's logic unchanged into `_retrieve_v1`; route v2 to a `_retrieve_v2` stub for now; set `index_version` (depends on T005, T007, T008)
 
 **Checkpoint**: a deploy with only this phase would already be safe and behaviour-neutral.
 
@@ -56,9 +56,9 @@ built on per-file queries.
 **Goal**: one query per changed file, oversized files split by hunk, all in batch calls.
 **Independent test**: spec US3.
 
-- [ ] T010 [P] [US3] lambda: `tests/unit/test_diff_queries.py`: split per file (add, modify, delete, rename), hunk split above 1,800 estimated tokens keeping the file header lines, a single oversized hunk split by lines, PR #8's shape producing 11 queries; changed-line set (removed lines, both neighbours of a pure insertion, context lines ignored, a new file adding nothing)
-- [ ] T011 [US3] lambda: `src/retrieve_context/diff_queries.py`: `split_queries(diff) -> list[DiffQuery]` and `changed_lines(diff) -> dict[path, set[int]]` (research R7, R8)
-- [ ] T012 [US3] lambda: `_retrieve_v2` builds the queries and embeds them with one `embed_queries` call; the empty-diff guard (`EmptyDiffError`) is kept (depends on T006, T009, T011)
+- [x] T010 [P] [US3] lambda: `tests/unit/test_diff_queries.py`: split per file (add, modify, delete, rename), hunk split above 1,800 estimated tokens keeping the file header lines, a single oversized hunk split by lines, PR #8's shape producing 11 queries; changed-line set (removed lines, both neighbours of a pure insertion, context lines ignored, a new file adding nothing)
+- [x] T011 [US3] lambda: `src/retrieve_context/diff_queries.py`: `split_queries(diff) -> list[DiffQuery]` and `changed_lines(diff) -> dict[path, set[int]]` (research R7, R8)
+- [x] T012 [US3] lambda: `_retrieve_v2` builds the queries and embeds them with one `embed_queries` call; the empty-diff guard (`EmptyDiffError`) is kept (depends on T006, T009, T011)
 
 ---
 
@@ -67,12 +67,12 @@ built on per-file queries.
 **Goal**: top-8 method chunks, never overlapping changed lines, scored and logged, grouped by file in the prompt.
 **Independent test**: spec US1.
 
-- [ ] T013 [P] [US1] lambda: `tests/unit/test_ranking.py`: max-fusion and `matched_query`; overlap exclusion drops only the overlapping chunks and keeps other methods of the same file; `TOP_N = 8`; tie order is stable; `rag_query` and `rag_chunk` JSON log lines (via caplog) match contracts/retrieve-context-v2.md, including `pr`, `score`, `excluded_overlapping` and `index_commit`
-- [ ] T014 [US1] lambda: `src/retrieve_context/ranking.py`: `rank(chunks, queries, changed_lines, top_n)` and the log emission (FR-018 to FR-022)
-- [ ] T015 [US1] lambda: finish `_retrieve_v2`: ranking plus `ContextChunk` v2 fields (depends on T012, T014)
-- [ ] T016 [P] [US1] lambda: `tests/unit/test_build_prompt_grouped.py`: v2 layout (files ordered by best score, header once per file, chunks in line order with `// lines a-b`, markers unchanged); v1 layout byte-identical to `golden_v1_prompt.txt`
-- [ ] T017 [US1] lambda: `src/integrations/llm_router.py` `build_prompt`: grouped layout when `index_version == 2`; `src/invoke_llm/handler.py` passes `index_version` through (FR-027)
-- [ ] T018 [US1] lambda: extend `tests/integration/test_context_enriched_review.py` with a v2 run end to end through the stubs: no overlapping chunk, grouped prompt, ≤8 chunks
+- [x] T013 [P] [US1] lambda: `tests/unit/test_ranking.py`: max-fusion and `matched_query`; overlap exclusion drops only the overlapping chunks and keeps other methods of the same file; `TOP_N = 8`; tie order is stable; `rag_query` and `rag_chunk` JSON log lines (via caplog) match contracts/retrieve-context-v2.md, including `pr`, `score`, `excluded_overlapping` and `index_commit`
+- [x] T014 [US1] lambda: `src/retrieve_context/ranking.py`: `rank(chunks, queries, changed_lines, top_n)` and the log emission (FR-018 to FR-022)
+- [x] T015 [US1] lambda: finish `_retrieve_v2`: ranking plus `ContextChunk` v2 fields (depends on T012, T014)
+- [x] T016 [P] [US1] lambda: `tests/unit/test_build_prompt_grouped.py`: v2 layout (files ordered by best score, header once per file, chunks in line order with `// lines a-b`, markers unchanged); v1 layout byte-identical to `golden_v1_prompt.txt`
+- [x] T017 [US1] lambda: `src/integrations/llm_router.py` `build_prompt`: grouped layout for located (v2) chunks — chosen from the chunks themselves, so `invoke_llm/handler.py` needed no change (FR-027)
+- [x] T018 [US1] lambda: extend `tests/integration/test_context_enriched_review.py` with a v2 run end to end through the stubs: no overlapping chunk, grouped prompt, ≤8 chunks
 
 ---
 
@@ -81,16 +81,16 @@ built on per-file queries.
 **Goal**: per-attempt packing within the provider budget; skip a provider when the diff alone is too big.
 **Independent test**: spec US4.
 
-- [ ] T019 [P] [US4] lambda: `tests/unit/test_llm_router_budget.py`: the medium tier's Groq prompt has fewer chunks than Cerebras's; best-first packing skips whole chunks; a diff over Groq's budget → Groq client never called, plus a skip log line; every entry skipped → `LlmPromptTooLargeError` (not an `LlmTransientError`); a skip plus a transient failure → `LlmTransientError`; an `llm_attempt` JSON line on each attempt
-- [ ] T020 [US4] lambda: `src/integrations/llm_router.py`: `PROMPT_BUDGET` table and `CONTEXT_TOKEN_CAP = 3000` next to the `*_MAX_COMPLETION_TOKENS` constants (research R9, with its derivation comments); `pack_context`; per-attempt prompt build; skip; `LlmPromptTooLargeError`; `llm_attempt` log (FR-023 to FR-026, FR-028) (depends on T004, T017)
-- [ ] T021 [US4] lambda: update `StubLlmRouter` so its recorded `prompt` goes through the same packing for a nominal provider, keeping handler-level tests honest
+- [x] T019 [P] [US4] lambda: `tests/unit/test_llm_router_budget.py`: the medium tier's Groq prompt has fewer chunks than Cerebras's; best-first packing skips whole chunks; a diff over Groq's budget → Groq client never called, plus a skip log line; every entry skipped → `LlmPromptTooLargeError` (not an `LlmTransientError`); a skip plus a transient failure → `LlmTransientError`; an `llm_attempt` JSON line on each attempt
+- [x] T020 [US4] lambda: `src/integrations/llm_router.py`: `PROMPT_BUDGET` table and `CONTEXT_TOKEN_CAP = 3000` next to the `*_MAX_COMPLETION_TOKENS` constants (research R9, with its derivation comments); `pack_context`; per-attempt prompt build; skip; `LlmPromptTooLargeError`; `llm_attempt` log (FR-023 to FR-026, FR-028) (depends on T004, T017)
+- [x] ~~T021~~ Dropped: `StubLlmRouter` already records `build_prompt`'s output, which now groups v2 chunks; packing is provider-specific and is tested on the real router (`tests/unit/test_llm_router_budget.py`)
 
 ---
 
 ## Phase 7: Lambda delivery (US5 gate)
 
-- [ ] T022 lambda: update `specs/001-pr-review-pipeline/contracts/step-io-contracts.md` (RetrieveContext v1/v2, output fields, `TOP_N`, log lines, the new error class) and the RetrieveContext line in `CLAUDE.md` / `README.md` (FR-032)
-- [ ] T023 lambda: `ruff check src tests && pytest`; `terraform fmt/validate` unchanged
+- [x] T022 lambda: update `specs/001-pr-review-pipeline/contracts/step-io-contracts.md` (RetrieveContext v1/v2, output fields, `TOP_N`, log lines, the new error class) and the RetrieveContext line in `CLAUDE.md` / `README.md` (FR-032)
+- [x] T023 lambda: `ruff check src tests && pytest`; `terraform fmt/validate` unchanged
 - [ ] T024 🔒 lambda: push `feat/method-chunking`, open a PR → **`develop`** (never `main`)
 - [ ] T025 🔒 lambda: after the merge, `terraform apply` from `develop`; re-trigger PR #7; check with `measure_review.py pr:7` that it returns the baseline's top-3 in the same order and logs `index_version: 1` (quickstart §4)
 

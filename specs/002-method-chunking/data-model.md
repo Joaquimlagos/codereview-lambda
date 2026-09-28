@@ -62,8 +62,11 @@ pure insertions (research R8). It drives FR-020's exclusion.
 Every new field is optional with a `None` default, so a v1-built `RetrievedContext` still
 validates, and an InvokeLLM that ignores them still works.
 
-`RetrievedContext` gains an optional `index_version: int | None = None` (1 or 2). It
-selects the prompt layout: flat for v1, exactly as today, and grouped by file for v2.
+`RetrievedContext` gains an optional `index_version: int | None = None` (1 or 2), for
+observability. The prompt layout is chosen from the chunks themselves (located chunks →
+grouped; whole files → the pre-002 flat layout), so InvokeLLM needs no new input.
+Budget packing and the over-budget skip also apply only to located (v2) context: v1 context
+keeps the pre-002 prompt exactly, which is what makes the Lambda-first deploy neutral.
 
 ## Provider budget (constant table in `llm_router.py`)
 
