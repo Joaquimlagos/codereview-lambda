@@ -11,6 +11,14 @@ For each Step Functions execution given, reports:
     reproduces what RetrieveContext actually returned;
   - the model that answered, fallbacks, and every inline comment (category/severity).
 
+For a version 2 index (specs/002-method-chunking), RetrieveContext and InvokeLLM log their
+decisions as JSON lines (contracts/retrieve-context-v2.md): `rag_query` (counts and the score
+distribution over all candidates), one `rag_chunk` per selected chunk, one `llm_attempt` per
+model attempt. Those are the primary source for scores. The recompute runs the Lambda's
+own code (split_queries → one batch embedding call → rank) only with a key, as a
+cross-check. The prompt split is rebuilt the way the answering model received it:
+`pack_prompt` for that model, within its budget.
+
 Similarity is not logged by RetrieveContext, so it is recomputed: the diff is re-embedded
 with the same model, task type and dimensionality. Embeddings are deterministic, so the
 recomputed top-3 must match the execution's; the script says so explicitly when it doesn't.
@@ -38,6 +46,7 @@ REGION = "us-east-1"
 STATE_MACHINE = "codereview-pr-review"
 INDEX_KEY = "index/develop/index.json"
 INVOKE_LLM_LOG_GROUP = "/aws/lambda/codereview-invoke-llm"
+RETRIEVE_CONTEXT_LOG_GROUP = "/aws/lambda/codereview-retrieve-context"
 EMBEDDING_MODEL = "gemini-embedding-001"
 EMBEDDING_TOKEN_LIMIT = 2048
 GEMINI_COUNT_MODEL = "gemini-3.5-flash"
@@ -159,13 +168,17 @@ def invoke_llm_log_lines(logs, start, stop, pr_number: int, model_used: str) -> 
     events = []
     for page in logs.get_paginator("filter_log_events").paginate(**kwargs):
         events += [e["message"] for e in page["events"]
-                   if "answered" in e["message"] or "failed for PR" in e["message"]]
+                   if "answered" in e["message"] or "failed for PR" in e["message"]
+                   or e["message"].split("\t")[-1].startswith("Skipping ")]
 
     def request_id(message: str) -> str | None:
         parts = message.split("	")
         return parts[2] if len(parts) > 2 else None
 
-    ours = {request_id(m) for m in events if f"failed for PR {pr_number} " in m}
+    ours = {
+        request_id(m) for m in events
+        if f"failed for PR {pr_number} " in m or f"for PR {pr_number}: skipped" in m
+    }
     answered_label = model_used.rsplit(":", 1)[0] if model_used.count(":") >= 2 else model_used
     return [
         m for m in events
@@ -174,10 +187,38 @@ def invoke_llm_log_lines(logs, start, stop, pr_number: int, model_used: str) -> 
     ]
 
 
+def json_log_events(logs, group: str, start, stop, pr_number: int) -> list[dict]:
+    """The JSON decision lines (`{"event": ...}`) this PR's execution logged in `group`."""
+    kwargs = {
+        "logGroupName": group,
+        "startTime": int(start.timestamp() * 1000),
+        "endTime": int((stop + timedelta(seconds=5)).timestamp() * 1000),
+        "filterPattern": '"event"',
+    }
+    found = []
+    for page in logs.get_paginator("filter_log_events").paginate(**kwargs):
+        for event in page["events"]:
+            message = event["message"]
+            brace = message.find("{")
+            if brace < 0:
+                continue
+            try:
+                payload = json.loads(message[brace:])
+            except json.JSONDecodeError:
+                continue
+            if payload.get("pr") == pr_number:
+                found.append(payload)
+    return found
+
+
 def measure(prefix: str, env: dict, lambda_src: Path) -> dict:
     sys.path.insert(0, str(lambda_src))
     from contracts.models import ContextChunk
-    from integrations.llm_router import build_prompt
+    from contracts.token_estimate import estimate_tokens
+    from integrations.embeddings import GeminiEmbeddingClient
+    from integrations.llm_router import build_prompt, pack_prompt, parse_model_spec
+    from retrieve_context.diff_queries import changed_lines, split_queries
+    from retrieve_context.ranking import rank, score_distribution
 
     session = boto3.Session(region_name=REGION)
     sfn, s3, logs = session.client("stepfunctions"), session.client("s3"), session.client("logs")
@@ -199,12 +240,23 @@ def measure(prefix: str, env: dict, lambda_src: Path) -> dict:
     diff_text = s3.get_object(Bucket=event["diffBucket"], Key=event["diffKey"])["Body"].read()
     diff_text = diff_text.decode("utf-8")
 
-    # Prompt split. Built with this checkout's build_prompt, so run the script from the same
-    # commit that was deployed when the execution ran (baseline.md records it).
+    index, index_version = index_version_at(s3, event["diffBucket"], execution["startDate"])
+    version = index.get("version", 1)
+
+    # Prompt split. Built with this checkout's code, so run the script from the same commit
+    # that was deployed when the execution ran (baseline.md records it). For v2 context the
+    # prompt is packed per attempt: rebuild the one the answering model received.
     prompt = build_prompt(diff_text, chunks, event.get("paths"))
+    packed = None
+    if version == 2:
+        packed = pack_prompt(
+            parse_model_spec(analysis["model_used"]), diff_text, chunks, event.get("paths")
+        )
+        if packed.prompt is not None:
+            prompt = packed.prompt
     head, _, rest = prompt.partition(DIFF_MARKER)
     diff_part, _, context_part = rest.partition(CONTEXT_MARKER)
-    context_part = (CONTEXT_MARKER + context_part) if chunks else ""
+    context_part = (CONTEXT_MARKER + context_part) if CONTEXT_MARKER in prompt else ""
     instructions = head + DIFF_MARKER
     sections = {"instructions": instructions, "diff": diff_part, "context": context_part}
     tokens = {
@@ -220,22 +272,67 @@ def measure(prefix: str, env: dict, lambda_src: Path) -> dict:
     }
 
     # RAG ranking, recomputed against the index version live at execution start.
-    index, index_version = index_version_at(s3, event["diffBucket"], execution["startDate"])
-    returned = [c.path for c in chunks]
-    if key:
-        query = gemini_embed_query(api_base, key, diff_text)
-        ranking = sorted(
-            ({"path": c["path"], "similarity": round(cosine(c["vector"], query), 4),
-              "chars": len(c["text"])} for c in index["chunks"]),
-            key=lambda r: r["similarity"],
-            reverse=True,
-        )
-        reproduced = [r["path"] for r in ranking[: len(returned)]] == returned
+    rag_logs = json_log_events(
+        logs, RETRIEVE_CONTEXT_LOG_GROUP, execution["startDate"], execution["stopDate"],
+        event["prNumber"],
+    )
+    rag_query = next((e for e in rag_logs if e.get("event") == "rag_query"), None)
+    rag_chunks = sorted(
+        (e for e in rag_logs if e.get("event") == "rag_chunk"), key=lambda e: e["rank"]
+    )
+    attempt_logs = json_log_events(
+        logs, INVOKE_LLM_LOG_GROUP, execution["startDate"], execution["stopDate"],
+        event["prNumber"],
+    )
+    llm_attempts = [e for e in attempt_logs if e.get("event") == "llm_attempt"]
+
+    if version == 2:
+        returned = [c.id for c in chunks]
+        queries = split_queries(diff_text)
+        diff_embed_tokens = None
+        ranking, reproduced, max_score_diff, distribution_recomputed = None, None, None, None
+        if key:
+            vectors = GeminiEmbeddingClient(api_base, key).embed_queries(
+                [q.text for q in queries]
+            )
+            recomputed = rank(index["chunks"], queries, vectors, changed_lines(diff_text))
+            ranking = [
+                {"id": r.chunk["id"], "similarity": round(r.score, 4),
+                 "matched_query": r.matched_query}
+                for r in recomputed.candidates
+            ]
+            reproduced = [r.chunk["id"] for r in recomputed.selected] == returned
+            logged = {e["id"]: e["score"] for e in rag_chunks}
+            diffs = [abs(logged[r.chunk["id"]] - round(r.score, 4))
+                     for r in recomputed.selected if r.chunk["id"] in logged]
+            max_score_diff = max(diffs) if diffs else None
+            distribution_recomputed = score_distribution(recomputed)
+        rag_v2 = {
+            "queries": len(queries),
+            "largest_query_estimated_tokens": max(estimate_tokens(q.text) for q in queries),
+            "logged_query": rag_query,
+            "logged_chunks": rag_chunks,
+            "scores_from_logs": (rag_query or {}).get("scores"),
+            "scores_recomputed": distribution_recomputed,
+            "max_logged_vs_recomputed_score_diff": max_score_diff,
+        }
     else:
-        ranking = [{"path": c["path"], "similarity": None, "chars": len(c["text"])}
-                   for c in index["chunks"]]
-        reproduced = None
-    diff_embed_tokens = gemini_count(api_base, key, EMBEDDING_MODEL, diff_text)
+        returned = [c.path for c in chunks]
+        rag_v2 = None
+        if key:
+            query = gemini_embed_query(api_base, key, diff_text)
+            ranking = sorted(
+                ({"path": c["path"], "similarity": round(cosine(c["vector"], query), 4),
+                  "chars": len(c["text"])} for c in index["chunks"]),
+                key=lambda r: r["similarity"],
+                reverse=True,
+            )
+            reproduced = [r["path"] for r in ranking[: len(returned)]] == returned
+        else:
+            ranking = [{"path": c["path"], "similarity": None, "chars": len(c["text"])}
+                       for c in index["chunks"]]
+            reproduced = None
+        diff_embed_tokens = gemini_count(api_base, key, EMBEDDING_MODEL, diff_text)
 
     usage_lines = invoke_llm_log_lines(
         logs, execution["startDate"], execution["stopDate"], event["prNumber"],
@@ -263,8 +360,15 @@ def measure(prefix: str, env: dict, lambda_src: Path) -> dict:
             None if diff_embed_tokens is None else diff_embed_tokens > EMBEDDING_TOKEN_LIMIT
         ),
         "diff_o200k_tokens": len(encoder.encode(diff_text)),
-        "index": {"commit": index["commit"], "generatedAt": index["generatedAt"],
-                  "s3VersionId": index_version, "chunks": len(index["chunks"])},
+        "index": {"version": version, "commit": index["commit"],
+                  "generatedAt": index["generatedAt"], "s3VersionId": index_version,
+                  "chunks": len(index["chunks"])},
+        "rag_v2": rag_v2,
+        "llm_attempts": llm_attempts,
+        "packed": None if packed is None else {
+            "budget": packed.budget, "estimated_prompt": packed.estimated_prompt,
+            "chunks_kept": packed.chunks_kept, "chunks_dropped": packed.chunks_dropped,
+        },
         "rag_returned": returned,
         "rag_reproduced": reproduced,
         "rag_ranking": ranking,
