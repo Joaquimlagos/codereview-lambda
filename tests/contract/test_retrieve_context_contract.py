@@ -12,6 +12,7 @@ from integrations.storage import StubStorage
 from retrieve_context.handler import (
     INDEX_KEY,
     TOP_K,
+    EmptyDiffError,
     IndexCompatibilityError,
     retrieve_context,
 )
@@ -86,6 +87,26 @@ def test_retrieve_context_rejects_index_with_another_dimensionality(
     )
 
     with pytest.raises(IndexCompatibilityError, match="dimensions"):
+        retrieve_context(
+            pr_event,
+            storage=storage,
+            embedding_client=StubEmbeddingClient(vector=query_vector),
+        )
+
+
+@pytest.mark.parametrize("blank_diff", ["", "   ", "\n\n\t"])
+def test_retrieve_context_rejects_empty_or_blank_diff(
+    pr_event, rag_index, query_vector, blank_diff
+):
+    """An S3 object that exists but is empty/whitespace-only (e.g. a truncated write) MUST
+    fail the run visibly rather than send Gemini empty text (its own opaque HTTP 400) or
+    silently degrade to "no context" — a real diff always has at least a `diff --git` header,
+    so this can only be a data problem, never a legitimate docs-only PR."""
+    storage = StubStorage(
+        initial={pr_event["diffKey"]: blank_diff, INDEX_KEY: json.dumps(rag_index)}
+    )
+
+    with pytest.raises(EmptyDiffError, match="empty"):
         retrieve_context(
             pr_event,
             storage=storage,

@@ -92,6 +92,7 @@ def invoke_llm(
         diff_text=diff_text,
         complexity=complexity,
         context_chunks=context_chunks,
+        paths=pr_event.paths,
     )
     return review.model_dump()
 

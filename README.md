@@ -124,6 +124,33 @@ Free-tier availability varies a lot between models; see
 `specs/001-pr-review-pipeline/research.md`'s "Multi-provider model fallback" decision for the
 measurements behind the current lists.
 
+**The high tier gets a genuinely different configuration, not just the same one twice — and
+runs it first, not as a rarely-reached fallback.** `LLM_MODELS_HIGH` leads with Gemini at
+`thinkingLevel: "high"`, then falls back to Groq at `medium`. Leading with Groq (as low and
+medium do) would leave the deeper Gemini pass almost never reached in practice, since Groq's
+`medium` attempt succeeds most of the time — making the high tier behave like medium's
+config despite being configured differently. Gemini `high` measured 6 inline comments vs. 2
+at `low` on the same real prompt; Groq `medium` is the fallback, not the lead, because `high`
+effort on Groq reliably exhausts its output budget on reasoning alone and returns nothing
+(tested directly). The `high` Gemini call is also much slower (measured up to 63 s vs. 9–31 s
+at `low`), so it gets its own longer timeout and the Lambda's overall timeout is 180 s rather
+than 150 s. See research.md's "High-tier reasoning: why Gemini, not Groq".
+
+## Review quality
+
+Every inline comment must name a `category` (`bug`, `security`, `performance`,
+`maintainability`) and a `severity` (`low`, `medium`, `high`) — the prompt explicitly forbids
+praise or a description of the code as a `comments` entry; that belongs in the summary only.
+GitHub's Reviews API has no dedicated fields for either, so they're prefixed onto the posted
+text: `**[security · high]** <the observation>`.
+
+When any changed path looks auth/security-adjacent (matching
+`auth|security|jwt|crypto|password|session|login|token`), the prompt adds a short, generic
+security checklist — credential logging, user enumeration/timing differences, signature or
+clock-skew bypass, missing authorization, hardcoded secrets — described as categories, not as
+any specific PR's planted bugs. See research.md's "Review quality rubric" and "Security
+checklist for auth-sensitive changes" decisions for the real reviews that motivated both.
+
 ## Review comments
 
 `PostComment` posts the generated review as inline, diff-anchored comments — one GitHub

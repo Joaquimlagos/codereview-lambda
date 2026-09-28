@@ -98,6 +98,13 @@ class GitHubAppAuth:
         return token
 
 
+def _render_comment_body(comment: ReviewCommentDraft) -> str:
+    """One inline comment's posted text: category/severity prefixed onto the model's body,
+    so they stay visible on GitHub even though the Reviews API has no dedicated fields for
+    them (research.md, "Review quality rubric")."""
+    return f"**[{comment.category.value} · {comment.severity.value}]** {comment.body}"
+
+
 def _format_fallback_body(summary: str, comments: list[ReviewCommentDraft]) -> str:
     """Summary + inline comments concatenated into one conversational-comment body — used
     when GitHub rejects the structured review outright (422 on an invalid line). A single
@@ -105,7 +112,9 @@ def _format_fallback_body(summary: str, comments: list[ReviewCommentDraft]) -> s
     """
     if not comments:
         return summary
-    observations = "\n\n".join(f"**{c.path}:{c.line}** — {c.body}" for c in comments)
+    observations = "\n\n".join(
+        f"**{c.path}:{c.line}** — {_render_comment_body(c)}" for c in comments
+    )
     return f"{summary}\n\n---\n{observations}"
 
 
@@ -166,7 +175,7 @@ class RestGitHubClient(GitHubClient):
             # or request changes on the PR.
             "event": "COMMENT",
             "comments": [
-                {"path": c.path, "line": c.line, "side": "RIGHT", "body": c.body}
+                {"path": c.path, "line": c.line, "side": "RIGHT", "body": _render_comment_body(c)}
                 for c in comments
             ],
         }

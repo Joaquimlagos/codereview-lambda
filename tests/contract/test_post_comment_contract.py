@@ -35,7 +35,15 @@ def test_post_comment_posts_inline_comments(pr_event, stub_github_client):
         {
             "pr_id": str(pr_event["prNumber"]),
             "summary": "One observation below.",
-            "comments": [{"path": "src/app.py", "line": 5, "body": "Log the exception."}],
+            "comments": [
+                {
+                    "path": "src/app.py",
+                    "line": 5,
+                    "body": "Log the exception.",
+                    "category": "bug",
+                    "severity": "medium",
+                }
+            ],
             "model_used": "gemini-flash",
         },
     )
@@ -60,7 +68,15 @@ def test_post_comment_falls_back_to_conversational_comment_on_invalid_line(
         {
             "pr_id": str(pr_event["prNumber"]),
             "summary": "One observation below.",
-            "comments": [{"path": "src/app.py", "line": 999, "body": "Out-of-diff line."}],
+            "comments": [
+                {
+                    "path": "src/app.py",
+                    "line": 999,
+                    "body": "Out-of-diff line.",
+                    "category": "bug",
+                    "severity": "medium",
+                }
+            ],
             "model_used": "gemini-flash",
         },
     )

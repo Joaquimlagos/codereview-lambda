@@ -6,12 +6,20 @@ Every entry is `provider:model[:reasoning]` — e.g. `groq:openai/gpt-oss-120b:l
 provider (GeminiClient, GroqClient) calls that provider's HTTP API directly; there is no
 routing service in front of them. MultiProviderLlmRouter tries the entries in order, falling
 back across models and providers, and stops early when the Lambda's remaining time can't fit
-another attempt. See research.md's "Multi-provider model fallback" for the measurements
-behind the lists.
+another attempt (per-attempt budget, since Gemini's "high" reasoning needs much longer than
+everything else — see `_attempt_budget_ms`). See research.md's "Multi-provider model
+fallback" for the measurements behind the lists.
+
+build_prompt's rubric requires every inline comment to be a real problem with a `category`
+and `severity` — never praise or description, which belong in `summary` only — and appends a
+security checklist when any changed path looks auth-adjacent (research.md's "Review quality
+rubric"). Every successful call is logged (`finish_reason`/`finishReason` + token usage), not
+only failed ones.
 """
 
 import json
 import logging
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -33,7 +41,26 @@ READ_TIMEOUT_SECONDS = 45
 # Sandbox.Timedout (not retried, and without the per-model failure details).
 ATTEMPT_TIME_BUDGET_MS = (CONNECT_TIMEOUT_SECONDS + READ_TIMEOUT_SECONDS) * 1000
 
+# Gemini's "high" thinkingLevel is dramatically slower than "low" — measured 63s (vs. 9-31s at
+# "low") on a realistic diff-plus-context prompt, with real variance observed between runs.
+# It needs its own, much larger read timeout and attempt budget; every other client/reasoning
+# combination still uses READ_TIMEOUT_SECONDS/ATTEMPT_TIME_BUDGET_MS above. See research.md,
+# "High-tier reasoning: why Gemini, not Groq".
+GEMINI_HIGH_REASONING_READ_TIMEOUT_SECONDS = 90
+GEMINI_HIGH_REASONING_ATTEMPT_BUDGET_MS = (
+    CONNECT_TIMEOUT_SECONDS + GEMINI_HIGH_REASONING_READ_TIMEOUT_SECONDS
+) * 1000
+
 PROVIDERS = ("gemini", "groq")
+
+# Path substrings (case-insensitive) that trigger the security checklist in build_prompt.
+# Matched against every path on the incoming event, not only the ones in the diff, so a
+# checklist added to context files still counts. Generic on purpose, not tied to any one
+# PR's specific defects.
+SECURITY_SENSITIVE_PATH_PATTERN = re.compile(
+    r"auth|security|jwt|crypto|password|session|login|token", re.IGNORECASE
+)
+
 
 # Complexity tier -> the env var suffix holding that tier's model fallback list.
 _TIER_ENV_SUFFIX: dict[Complexity, str] = {
@@ -58,6 +85,15 @@ class ModelSpec:
         """The entry as written in config; reported as GeneratedReview.model_used."""
         base = f"{self.provider}:{self.model}"
         return f"{base}:{self.reasoning}" if self.reasoning else base
+
+
+def _attempt_budget_ms(spec: ModelSpec) -> int:
+    """How much Lambda time a specific model+reasoning attempt needs in the worst case —
+    used for the pre-attempt deadline check. Only Gemini's "high" reasoning gets the larger
+    budget; every other entry uses the default."""
+    if spec.provider == "gemini" and spec.reasoning == "high":
+        return GEMINI_HIGH_REASONING_ATTEMPT_BUDGET_MS
+    return ATTEMPT_TIME_BUDGET_MS
 
 
 def parse_model_spec(entry: str) -> ModelSpec:
@@ -154,10 +190,18 @@ def _error_code(response) -> str | None:
         return None
 
 
-def _post_json(session, url: str, payload: dict, headers: dict, label: str) -> dict:
+def _post_json(
+    session,
+    url: str,
+    payload: dict,
+    headers: dict,
+    label: str,
+    read_timeout: int = READ_TIMEOUT_SECONDS,
+) -> dict:
     """POST one generation request and classify failures the same way for every provider:
     transient (next model, and Step Functions retry), model gone (next model), or permanent
-    (stop)."""
+    (stop). `read_timeout` defaults to READ_TIMEOUT_SECONDS; callers whose reasoning setting
+    is known to run long (Gemini's "high" thinkingLevel) pass a larger value."""
     import requests
 
     try:
@@ -165,7 +209,7 @@ def _post_json(session, url: str, payload: dict, headers: dict, label: str) -> d
             url,
             json=payload,
             headers=headers,
-            timeout=(CONNECT_TIMEOUT_SECONDS, READ_TIMEOUT_SECONDS),
+            timeout=(CONNECT_TIMEOUT_SECONDS, read_timeout),
         )
     except (requests.Timeout, requests.ConnectionError) as exc:
         raise LlmTransientError(f"{label} request failed: {exc}") from exc
@@ -230,7 +274,14 @@ class GeminiClient(ModelClient):
         # Gemini authenticates with this header, not an OAuth-style Bearer token.
         headers = {"x-goog-api-key": self._api_key}
         url = f"{self._api_base}/models/{model}:generateContent"
-        data = _post_json(self._session, url, payload, headers, label)
+        # "high" thinkingLevel measured 63s on a realistic prompt (vs. 9-31s at "low") — the
+        # default READ_TIMEOUT_SECONDS would time this out as a false LlmTransientError.
+        read_timeout = (
+            GEMINI_HIGH_REASONING_READ_TIMEOUT_SECONDS
+            if reasoning == "high"
+            else READ_TIMEOUT_SECONDS
+        )
+        data = _post_json(self._session, url, payload, headers, label, read_timeout=read_timeout)
 
         # An empty/missing `candidates` list (HTTP 200) means the response was blocked by a
         # safety filter: a generation failure (FR-008), so PostComment never receives it.
@@ -253,6 +304,15 @@ class GeminiClient(ModelClient):
             raise LlmRouterError(
                 f"{label} returned an empty response (finishReason {finish_reason})"
             )
+        # Observability on the success path too, not only on failure (research.md, "Per-call
+        # observability"): usageMetadata's thoughtsTokenCount is what actually explains a slow
+        # or truncated-looking call after the fact.
+        logger.info(
+            "%s answered: finishReason=%s usage=%s",
+            label,
+            candidates[0].get("finishReason"),
+            data.get("usageMetadata"),
+        )
         return text
 
 
@@ -305,10 +365,71 @@ class GroqClient(ModelClient):
             raise LlmRouterError(
                 f"{label} returned an empty response (finish_reason {finish_reason})"
             )
+        logger.info(
+            "%s answered: finish_reason=%s usage=%s",
+            label,
+            choices[0].get("finish_reason"),
+            data.get("usage"),
+        )
         return text
 
 
-def build_prompt(diff_text: str, context_chunks: list[ContextChunk] | None = None) -> str:
+def _touches_security_sensitive_path(paths: list[str] | None) -> bool:
+    """Whether any changed path looks auth/security-adjacent (SECURITY_SENSITIVE_PATH_PATTERN),
+    gating the security checklist in build_prompt below."""
+    return bool(paths) and any(SECURITY_SENSITIVE_PATH_PATTERN.search(p) for p in paths)
+
+
+# The rubric section of the prompt: what counts as an inline comment, and what to actively
+# check per category (see research.md, "Review quality rubric"). Written to make the model
+# hunt for problems in each category rather than default to an empty list, and to keep praise
+# and description out of `comments` entirely — both were observed in real reviews (PR #7's
+# "which is appropriate", "good for consistency"; PR #8's and #9's genuinely empty comments on
+# diffs that, per the rubric below, had at least a minor maintainability point available).
+_RUBRIC = (
+    "Every entry in `comments` MUST be a real, actionable problem — never praise, never a "
+    "description of what the code does. If you would only say something positive or merely "
+    "restate the change, put that in `summary` instead and leave it out of `comments`.\n\n"
+    "Each comment MUST have a `category`, one of:\n"
+    '- "bug": incorrect logic, unhandled edge case, wrong error handling, broken behavior.\n'
+    '- "security": credential/secret exposure, injection, auth/authorization bypass, unsafe '
+    "deserialization, or similar.\n"
+    '- "performance": unnecessary work in a hot path, an avoidable O(n^2) or worse, a leak.\n'
+    '- "maintainability": duplication, a misleading name, missing test coverage for new '
+    "behavior, a magic value that should be named or configurable.\n\n"
+    "Each comment MUST also have a `severity`, one of \"low\", \"medium\", \"high\", reflecting "
+    "how much it matters, not how confident you are.\n\n"
+    "Actively check every category above against the diff before answering — do not default "
+    "to an empty `comments` list just because nothing is obviously broken. A clean diff can "
+    "still have a real, if minor, maintainability point; only return `comments: []` after "
+    "genuinely checking and finding nothing in any category.\n\n"
+)
+
+# Appended only when a changed path matches SECURITY_SENSITIVE_PATH_PATTERN. Generic
+# categories, not tied to any specific PR's planted defects, so it helps a real auth change
+# without just memorizing one demo's answer key.
+_SECURITY_CHECKLIST = (
+    "This change touches an authentication/security-sensitive path. In addition to the "
+    "rubric above, specifically check for (as `category: \"security\"` comments where "
+    "applicable):\n"
+    "- Credentials, tokens, or passwords written to logs, error messages, or responses.\n"
+    "- User enumeration or timing differences: does the response (message, status code, or "
+    "latency) differ in a way that reveals whether a username/account exists, independent of "
+    "whether the password was correct?\n"
+    "- Signature, expiry, or clock-skew bypass: does any exception handler, broad catch, or "
+    "relaxed tolerance cause an invalid, expired, or unverifiable token/credential to be "
+    "accepted?\n"
+    "- Missing authorization: is the caller's identity checked, but not whether that identity "
+    "is *allowed* to do this specific action?\n"
+    "- Hardcoded secrets, keys, or credentials in source.\n\n"
+)
+
+
+def build_prompt(
+    diff_text: str,
+    context_chunks: list[ContextChunk] | None = None,
+    paths: list[str] | None = None,
+) -> str:
     """Diff under review, plus retrieved project files clearly labelled as *not* the diff.
 
     Without that separation the model tends to review the context files as if they were part
@@ -319,6 +440,9 @@ def build_prompt(diff_text: str, context_chunks: list[ContextChunk] | None = Non
     specific diff lines (inline PR comments) instead of landing as one undifferentiated block
     of text. The diff is passed through with its hunk headers intact (`@@ -a,b +c,d @@`),
     which is what lets the model work out each line's post-change number at all.
+
+    `paths` (the event's full changed-file list, not just what happens to be in `diff_text`)
+    gates an additional security checklist — see `_touches_security_sensitive_path`.
     """
     prompt = (
         "You are reviewing a pull request diff.\n\n"
@@ -326,19 +450,23 @@ def build_prompt(diff_text: str, context_chunks: list[ContextChunk] | None = Non
         "text — in exactly this shape:\n"
         '{"summary": "<2-3 sentence overview of the change>", '
         '"comments": [{"path": "<file path exactly as it appears in the diff>", '
-        '"line": <line number, integer>, "body": "<observation about that line>"}]}\n\n'
-        '`comments` MAY be an empty list ("comments": []) when there is nothing line-specific '
-        "to flag — that is a valid, complete review, not an error.\n\n"
-        '`line` MUST be a line number on the file\'s state AFTER the change (the diff\'s "+" '
+        '"line": <line number, integer>, "body": "<the problem, and why it matters>", '
+        '"category": "bug | security | performance | maintainability", '
+        '"severity": "low | medium | high"}]}\n\n'
+        '`comments` MAY be an empty list ("comments": []) when there is genuinely nothing to '
+        "flag after actively checking — see the rubric below.\n\n"
+        + _RUBRIC
+        + '`line` MUST be a line number on the file\'s state AFTER the change (the diff\'s "+" '
         "side), and MUST refer only to a line that actually appears in the diff below. Use "
         "each hunk's header (`@@ -old_start,old_count +new_start,new_count @@`) to work out "
         "line numbers: the first line following a hunk header is `new_start`, and the number "
         "increments for every following context line (starts with a space) or added line "
         "(starts with `+`). Removed lines (start with `-`) do not exist on the post-change "
         "side and MUST NOT be used as `line`.\n\n"
-        "=== DIFF UNDER REVIEW ===\n"
-        f"{diff_text}\n"
     )
+    if _touches_security_sensitive_path(paths):
+        prompt += _SECURITY_CHECKLIST
+    prompt += "=== DIFF UNDER REVIEW ===\n" f"{diff_text}\n"
     if context_chunks:
         prompt += (
             "\n=== ADDITIONAL PROJECT CONTEXT ===\n"
@@ -364,17 +492,39 @@ def _strip_code_fence(text: str) -> str:
     return "\n".join(lines)
 
 
+def _parse_comment(raw_comment) -> ReviewCommentDraft:
+    """Build one ReviewCommentDraft from the model's raw dict. Raises on any missing/invalid
+    field (KeyError, ValueError, or pydantic's ValidationError for a bad `category`/
+    `severity` value) — the caller catches this per comment, not for the whole response."""
+    return ReviewCommentDraft(
+        path=raw_comment["path"],
+        line=int(raw_comment["line"]),
+        body=raw_comment["body"],
+        category=raw_comment["category"],
+        severity=raw_comment["severity"],
+    )
+
+
 def parse_review_response(raw_text: str, pr_id: str, model_used: str) -> GeneratedReview:
     """Parse a model's response text against the structured-JSON contract `build_prompt`
     instructs.
 
-    Defensive by design: a model can still reply with prose, truncated JSON, or the wrong
-    shape despite the prompt. Any such failure degrades to the pre-structured-comments
-    behavior — the whole raw response becomes `summary`, `comments` is forced empty — rather
-    than raising and losing the review entirely (FR-008 still governs a genuinely *empty*
-    response; the clients reject that before this function ever runs). `parse_fallback`
-    on the returned `GeneratedReview` records that this happened, and a warning is logged, so
-    a persistently malformed model output is observable rather than silently swallowed.
+    Defensive at two levels, for two different kinds of failure:
+
+    - **Whole-response fallback** (`parse_fallback: true`): the raw text isn't valid JSON, or
+      isn't an object, or `summary` is missing/empty, or `comments` isn't a list. None of
+      that can be salvaged, so the whole raw response becomes `summary` and `comments` is
+      forced empty — degrading to the pre-structured-comments behavior rather than raising
+      and losing the review entirely (FR-008 still governs a genuinely *empty* response;
+      the clients reject that before this function ever runs).
+    - **Per-comment discard** (`parse_fallback` stays `false`): once `summary` and the
+      `comments` list shape are confirmed valid, each entry is parsed independently. A
+      comment missing `category`/`severity`, or with an invalid value for either, is dropped
+      — it does not invalidate `summary` or any other, otherwise-valid comment. How many were
+      dropped, and why, is logged so a model that does this often is observable.
+
+    Either way, a warning is logged so a persistently malformed model output is observable
+    rather than silently swallowed.
     """
     try:
         parsed = json.loads(_strip_code_fence(raw_text))
@@ -388,18 +538,6 @@ def parse_review_response(raw_text: str, pr_id: str, model_used: str) -> Generat
         raw_comments = parsed.get("comments", [])
         if not isinstance(raw_comments, list):
             raise ValueError("'comments' is not a list")
-
-        comments = [
-            ReviewCommentDraft(path=c["path"], line=int(c["line"]), body=c["body"])
-            for c in raw_comments
-        ]
-        return GeneratedReview(
-            pr_id=pr_id,
-            summary=summary,
-            comments=comments,
-            model_used=model_used,
-            parse_fallback=False,
-        )
     except Exception as exc:
         logger.warning(
             "%s response for PR %s was not the instructed structured-JSON shape (%s); "
@@ -416,6 +554,33 @@ def parse_review_response(raw_text: str, pr_id: str, model_used: str) -> Generat
             parse_fallback=True,
         )
 
+    comments: list[ReviewCommentDraft] = []
+    discarded: list[str] = []
+    for raw_comment in raw_comments:
+        try:
+            comments.append(_parse_comment(raw_comment))
+        except Exception as exc:
+            discarded.append(f"{raw_comment!r}: {exc}")
+    if discarded:
+        logger.warning(
+            "%s response for PR %s: discarded %d of %d comment(s) missing/invalid "
+            "category or severity, keeping the %d valid one(s): %s",
+            model_used,
+            pr_id,
+            len(discarded),
+            len(raw_comments),
+            len(comments),
+            "; ".join(discarded),
+        )
+
+    return GeneratedReview(
+        pr_id=pr_id,
+        summary=summary,
+        comments=comments,
+        model_used=model_used,
+        parse_fallback=False,
+    )
+
 
 class LlmRouter(ABC):
     @abstractmethod
@@ -425,8 +590,11 @@ class LlmRouter(ABC):
         diff_text: str,
         complexity: Complexity,
         context_chunks: list[ContextChunk] | None = None,
+        paths: list[str] | None = None,
     ) -> GeneratedReview:
-        """Generate a review for `diff_text` (plus optional retrieved `context_chunks`)."""
+        """Generate a review for `diff_text` (plus optional retrieved `context_chunks`).
+        `paths` is the event's full changed-file list, used only to gate the security
+        checklist in build_prompt — it does not affect which model is selected."""
 
 
 class MultiProviderLlmRouter(LlmRouter):
@@ -436,8 +604,10 @@ class MultiProviderLlmRouter(LlmRouter):
       with no answer) or LlmModelNotFoundError (model gone): log it and try the next model.
     - Any other LlmRouterError (400/401/403, a blocked or otherwise empty response): stop
       immediately — a bad request or key won't be fixed by switching models.
-    - Before each attempt, if the Lambda's remaining time is under ATTEMPT_TIME_BUDGET_MS,
-      stop with LlmTransientError instead of starting an attempt Lambda would cut off.
+    - Before each attempt, if the Lambda's remaining time is under that attempt's budget
+      (_attempt_budget_ms — larger for Gemini's "high" reasoning, ATTEMPT_TIME_BUDGET_MS
+      otherwise), stop with LlmTransientError instead of starting an attempt Lambda would
+      cut off.
     - When the list is exhausted: LlmModelNotFoundError if every model was gone, otherwise
       LlmTransientError, so Step Functions' Retry re-runs the whole list.
 
@@ -467,21 +637,20 @@ class MultiProviderLlmRouter(LlmRouter):
         diff_text: str,
         complexity: Complexity,
         context_chunks: list[ContextChunk] | None = None,
+        paths: list[str] | None = None,
     ) -> GeneratedReview:
         specs = models_for_complexity(complexity)
-        prompt = build_prompt(diff_text, context_chunks)
+        prompt = build_prompt(diff_text, context_chunks, paths)
         failures: list[str] = []
         every_failure_was_model_gone = True
 
         for attempt, spec in enumerate(specs):
-            if (
-                self._remaining_time_ms is not None
-                and self._remaining_time_ms() < ATTEMPT_TIME_BUDGET_MS
-            ):
+            budget_ms = _attempt_budget_ms(spec)
+            if self._remaining_time_ms is not None and self._remaining_time_ms() < budget_ms:
                 failed = "; ".join(failures) or "none"
                 not_attempted = ", ".join(s.label for s in specs[attempt:])
                 raise LlmTransientError(
-                    f"Stopped before {spec.label}: less than {ATTEMPT_TIME_BUDGET_MS // 1000}s "
+                    f"Stopped before {spec.label}: less than {budget_ms // 1000}s "
                     f"of Lambda time left for another attempt. Failed: {failed}. "
                     f"Not attempted: {not_attempted}"
                 )
@@ -533,6 +702,7 @@ class StubLlmRouter(LlmRouter):
         diff_text: str,
         complexity: Complexity,
         context_chunks: list[ContextChunk] | None = None,
+        paths: list[str] | None = None,
     ) -> GeneratedReview:
         model = STUB_MODEL_BY_COMPLEXITY[complexity]
         self.calls.append(
@@ -541,7 +711,8 @@ class StubLlmRouter(LlmRouter):
                 "diff_text": diff_text,
                 "complexity": complexity,
                 "context_chunks": context_chunks,
-                "prompt": build_prompt(diff_text, context_chunks),
+                "paths": paths,
+                "prompt": build_prompt(diff_text, context_chunks, paths),
                 "model": model,
             }
         )

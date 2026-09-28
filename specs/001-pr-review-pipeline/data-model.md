@@ -76,13 +76,18 @@ Output of `InvokeLLM`; consumed by `PostComment`.
 | `comments` | list of Review Comment Draft | Inline, diff-line-anchored observations; MAY be empty — a PR with nothing line-specific to flag is a valid, complete review (spec Edge Case), not an error |
 | `model_used` | string | The model that actually generated it (Principle III traceability). With per-tier fallback lists this may not be the tier's first choice |
 | `fell_back` | boolean | `true` when the tier's first-choice model failed transiently and a later entry in its `LLM_MODELS_{tier}` list generated the review. Makes the fallback rate observable in the Step Functions output |
-| `parse_fallback` | boolean | `true` when Gemini's raw response could not be parsed as the instructed structured-JSON shape, so the whole raw response was used as `summary` with `comments` forced empty. Not an error by itself, but a persistently `true` value signals the prompt needs adjustment |
+| `parse_fallback` | boolean | `true` when the model's raw response could not be parsed as the instructed structured-JSON shape at the top level (not valid JSON, not an object, or `summary`/`comments` malformed), so the whole raw response was used as `summary` with `comments` forced empty. A comment individually missing `category`/`severity` does NOT set this — it's discarded on its own (logged) while the rest of the response is kept. Not an error by itself, but a persistently `true` value signals the prompt needs adjustment |
 
-Each Review Comment Draft is `{ path, line, body }`: `path` is the file exactly as it appears
-in the diff, `line` is the line number on the file's state *after* the change (the diff's "+"
-side) — the side GitHub's Reviews API expects paired with `side: "RIGHT"` — and `body` is the
-observation text. `InvokeLLM` instructs Gemini to only reference lines that actually appear in
-the diff, but `PostComment`/GitHub is what actually enforces this (see Review Comment below).
+Each Review Comment Draft is `{ path, line, body, category, severity }`: `path` is the file
+exactly as it appears in the diff, `line` is the line number on the file's state *after* the
+change (the diff's "+" side) — the side GitHub's Reviews API expects paired with
+`side: "RIGHT"` — and `body` is the observation text. `category` is one of `bug`, `security`,
+`performance`, `maintainability`; `severity` is one of `low`, `medium`, `high`. Both are
+required, not optional metadata: the prompt's rubric (research.md, "Review quality rubric")
+instructs the model that every entry in `comments` must be a real problem in one of those
+categories — never praise or a description of what the code does, which belong in `summary`
+only. `InvokeLLM` instructs the model to only reference lines that actually appear in the
+diff, but `PostComment`/GitHub is what actually enforces this (see Review Comment below).
 
 **Validation**: `summary` MUST be non-empty and non-malformed; if generation produces no usable
 output at all (no candidates, or a genuinely empty response), the pipeline MUST NOT construct a

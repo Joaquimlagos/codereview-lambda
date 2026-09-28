@@ -11,7 +11,13 @@ def test_end_to_end_review_without_context(
 ):
     stub_decision_engine.forced_result = RoutingDecision(complexity="low", needsContext=False)
     stub_llm_router.comments = [
-        {"path": "src/app.py", "line": 5, "body": "Consider logging the exception too."}
+        {
+            "path": "src/app.py",
+            "line": 5,
+            "body": "Consider logging the exception too.",
+            "category": "maintainability",
+            "severity": "low",
+        }
     ]
 
     routing = route_model(pr_event, decision_engine=stub_decision_engine)

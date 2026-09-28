@@ -55,6 +55,18 @@ class IndexCompatibilityError(Exception):
     """Raised when the index was built with a different embedding model/dimensionality."""
 
 
+class EmptyDiffError(Exception):
+    """Raised when the diff object was read successfully but its content is blank.
+
+    Embedding blank text is not a "nothing to compare" situation the same way a missing
+    index is: Gemini's embedContent rejects empty input with an opaque HTTP 400, and a blank
+    diff is itself a real data problem — a docs-only PR's diff still has `diff --git`/hunk
+    headers and is never actually empty, so this can only mean the S3 object is genuinely
+    empty or was truncated on write. Fails the run visibly (spec Edge Case), same as a
+    missing diff key, rather than degrading silently or surfacing Gemini's own error text.
+    """
+
+
 def _default_embedding_client() -> EmbeddingClient:
     api_key = resolve_api_key(GEMINI_API_KEY_ENV, GEMINI_API_KEY_SECRET_ARN_ENV)
     return GeminiEmbeddingClient(api_base=require_env("GEMINI_API_BASE"), api_key=api_key)
@@ -126,6 +138,14 @@ def retrieve_context(
 
     # A diff that cannot be found/read MUST fail the run visibly (spec Edge Case).
     diff_text = storage.get_text(pr_event.diff_key)
+    if not diff_text or not diff_text.strip():
+        # A real diff is never blank (at minimum it has `diff --git`/hunk headers); an empty
+        # or whitespace-only object at this key means something else went wrong writing it
+        # (e.g. a truncated upload) — fail loudly rather than send Gemini empty text (400) or
+        # silently return "no context" for what is actually a data problem.
+        raise EmptyDiffError(
+            f"Diff at {pr_event.diff_key!r} in bucket {pr_event.diff_bucket!r} is empty"
+        )
     query_vector = embedding_client.embed_query(diff_text)
 
     _verify_index_compatibility(index, embedding_client, query_vector)

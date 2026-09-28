@@ -99,12 +99,16 @@ resource "aws_lambda_function" "invoke_llm" {
   role          = aws_iam_role.invoke_llm.arn
   handler       = "invoke_llm.handler.handler"
   runtime       = "python3.14"
-  # 150s: each model attempt allows 5s to connect + 45s to read (llm_router.py), so three
-  # attempts that all run to their limit take ~150s. The router also checks the remaining
-  # time before every attempt and stops with LlmTransientError when less than one full
-  # attempt (50s) is left, so a longer list, or cold start and the secret fetch eating into
-  # the budget, ends in an error Step Functions retries rather than a Lambda timeout.
-  timeout = 150
+  # 180s: most attempts allow 5s to connect + 45s to read (50s budget), but the high tier's
+  # Gemini entry (gemini:gemini-3.5-flash:high, tried first — see LLM_MODELS_HIGH) needs far
+  # more — measured 63s on a realistic prompt, with real run-to-run variance — so it gets its
+  # own 5s + 90s budget (95s; llm_router.py's GEMINI_HIGH_REASONING_*). Worst case for
+  # LLM_MODELS_HIGH is Gemini's high attempt (95s) then Groq's medium fallback (50s) = 145s,
+  # plus cold start and the secret fetch; 180s leaves real margin instead of the ~0s the
+  # previous 150s left for exactly that path. The router still checks the remaining time
+  # before every attempt (against that attempt's own budget) and stops with LlmTransientError
+  # rather than being cut off by Lambda's own timeout.
+  timeout = 180
   # 256 MB: at 128 MB a cold start alone used ~104 MB (boto3 + pydantic), and Lambda
   # scales CPU with memory, so 128 MB also made cold starts slow.
   memory_size = 256
@@ -129,7 +133,7 @@ resource "aws_lambda_function" "invoke_llm" {
       GROQ_API_KEY_SECRET_ARN   = data.aws_ssm_parameter.groq_api_key_arn.value
       LLM_MODELS_LOW            = "groq:openai/gpt-oss-120b:low,gemini:gemini-3.5-flash:low"
       LLM_MODELS_MEDIUM         = "groq:openai/gpt-oss-120b:medium,gemini:gemini-3.5-flash:low"
-      LLM_MODELS_HIGH           = "groq:openai/gpt-oss-120b:medium,gemini:gemini-3.5-flash:low"
+      LLM_MODELS_HIGH           = "gemini:gemini-3.5-flash:high,groq:openai/gpt-oss-120b:medium"
     }
   }
 

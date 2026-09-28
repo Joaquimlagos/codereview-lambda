@@ -328,7 +328,7 @@ in `LLM_MODELS_*`, and Gemma is out. Kept for the measurements and reasoning tha
   |---|---|
   | low | `groq:openai/gpt-oss-120b:low`, `gemini:gemini-3.5-flash:low` |
   | medium | `groq:openai/gpt-oss-120b:medium`, `gemini:gemini-3.5-flash:low` |
-  | high | `groq:openai/gpt-oss-120b:medium`, `gemini:gemini-3.5-flash:low` |
+  | high | `gemini:gemini-3.5-flash:high`, `groq:openai/gpt-oss-120b:medium` (changed after this decision was first written — see "High-tier reasoning: why Gemini, not Groq" below for why Gemini leads rather than falls back) |
 
   Groq is called through its OpenAI-compatible `chat/completions` endpoint (`GroqClient`);
   Gemini through `generateContent` (`GeminiClient`). The optional third field sends the
@@ -387,6 +387,20 @@ in `LLM_MODELS_*`, and Gemma is out. Kept for the measurements and reasoning tha
   empty. 5,500 is about 1.5× the largest measured output and was accepted without a 429 (see
   above). Low effort used at most 1,073 output tokens, well under the default, so it sends
   no cap.
+- **The `high`-effort empty-content failure also happens at `medium`, non-deterministically**:
+  a real `invoke-llm` run against `codereview-app` PR #13 (`gpt-oss-120b`, `reasoning_effort:
+  medium`, `max_completion_tokens: 5500`, prompt 2,531 tokens — well under any TPM ceiling)
+  spent 5,498 of the 5,500 completion tokens on reasoning and returned empty content
+  (`finish_reason: "length"`) — the same failure this document previously described only for
+  `high` effort. It does not reproduce on every `medium` run at a similar prompt size (see
+  "High-tier reasoning: why Gemini, not Groq" below: Groq `:medium` succeeded on first attempt
+  across PR #3, #5, #7, `fell_back: false` every time), so this is run-to-run variance in how
+  long the model reasons on the same prompt/model/effort tuple, not a deterministic function of
+  prompt size. The existing `LlmOutputTruncatedError` handling already covers it (the router
+  moves to the next list entry, `gemini:gemini-3.5-flash:low` for the medium tier), so the
+  pipeline degrades correctly when this happens; the raised cap only lowers the probability of
+  the failure, it does not eliminate it the way it might appear to from the `high`-only framing
+  above.
 - **Error handling**: HTTP 404, and Groq's `model_not_found`/`model_decommissioned` codes
   (which Groq can send with HTTP 400), raise `LlmModelNotFoundError`, and the router moves to
   the next entry: providers remove free-tier models without notice. If every entry is gone,
@@ -469,6 +483,212 @@ in `LLM_MODELS_*`, and Gemma is out. Kept for the measurements and reasoning tha
   path once the App path was confirmed working; `codereview-infra`'s `github-token` secret
   itself is left in place (unused) rather than deleted, since removing infrastructure this
   repo doesn't own is out of scope here.
+
+## Review quality rubric
+
+- **Decision**: `build_prompt` now requires every entry in `comments` to carry a `category`
+  (`bug`, `security`, `performance`, `maintainability`) and a `severity` (`low`, `medium`,
+  `high`), and explicitly states that praise or a description of what the code does belongs
+  in `summary` only, never in `comments`. The prompt also lists what to actively check per
+  category, and instructs the model not to default to an empty `comments` list just because
+  nothing is obviously broken.
+- **Why**: real reviews on `codereview-app` PRs showed two failure modes. PR #7 (a small,
+  correct validation change) got 7 inline comments, at least 3 of them pure praise/restatement
+  ("`validateTitle(task)` is called before ID generation, **which is appropriate**...",
+  "...also called before updating; **good for consistency**", "...could be made static... **but
+  current implementation works**") — noise that dilutes the signal of the real findings in the
+  same review. PR #8 (11 files, +686 lines, clean CRUD code) and PR #9 (47/-10, a CI/docs
+  change) both got a valid, non-empty `summary` and `comments: []` — inspecting both diffs by
+  hand found no real defect either, but on an 11-file diff, "no findings, not even a minor
+  maintainability note" is itself a sign the model defaults to silence rather than actively
+  checking; the previous prompt only described the JSON *shape*, never what to look for.
+- **`category`/`severity` are required fields, not optional metadata.** A comment missing
+  either fails `ReviewCommentDraft` validation inside `parse_review_response` — but unlike a
+  top-level shape mismatch (bad JSON, missing `summary`, `comments` not a list), this is
+  scoped to that one comment: it's discarded individually (logged, with a count of how many
+  of how many total were dropped), while `summary` and every other, valid comment are kept
+  and `parse_fallback` stays `false`. `parse_fallback: true` is reserved for the response
+  being unusable at the top level, not for one unclassified comment among otherwise-good
+  ones — an early version of this decision folded both into the same fallback, which meant a
+  single malformed comment could silently throw away an entire good review.
+- **Where category/severity surface**: GitHub's Reviews API has no dedicated fields for
+  either, so `integrations/github.py`'s `_render_comment_body` prefixes them onto the posted
+  text: `**[security · high]** <body>`. Used identically by the real review post and the
+  422-fallback conversational comment.
+- **Alternatives considered**: A numeric confidence/quality score instead of severity
+  (rejected — severity answers "how much does this matter", which is what a reviewer
+  triaging comments actually needs; confidence in the model's own correctness is a different,
+  harder-to-calibrate thing); enforcing "no empty comments on large diffs" as a hard rule
+  (rejected — a genuinely clean large diff is possible, and forcing a comment out of nothing
+  would just reintroduce the noise problem from PR #7 in a different form; the rubric asks
+  the model to check actively, but doesn't forbid a genuinely empty result).
+
+## Security checklist for auth-sensitive changes
+
+- **Decision**: When any path on the incoming event (`PullRequestEvent.paths`, not only the
+  paths that happen to appear in `diff_text`) matches
+  `SECURITY_SENSITIVE_PATH_PATTERN` (`auth|security|jwt|crypto|password|session|login|token`,
+  case-insensitive), `build_prompt` appends a short, generic checklist: credential/secret
+  logging, user enumeration or timing differences between failure reasons, signature/expiry/
+  clock-skew bypass, missing authorization (identity checked but not permission), and
+  hardcoded secrets.
+- **Why, with evidence**: `codereview-app` PR #3 (a deliberately vulnerable auth change, run
+  twice) never flagged its planted user-enumeration bug — the login endpoint returns a
+  different response body ("User not found" vs. "Incorrect password") depending on whether
+  the username exists. Reading the actual diff showed this was not a visibility problem: the
+  latest review commented on the *exact same two lines* about a different issue (cleartext
+  password logging), so the model read that code and picked one defect over the other, twice
+  in a row across two independent runs. That is exactly what a checklist fixes — nothing in
+  the prompt named "differing error responses" as a thing to check for.
+- **Generic wording, deliberately**: the checklist describes categories of security issue,
+  not this PR's specific bugs (no mention of a 24-hour clock skew constant, `InMemoryUsers`,
+  or any of PR #3's actual code) — so it helps a real, different auth change, rather than
+  only ever answering one demo's fixed answer key. `tests/unit/test_llm_router.py` has a test
+  asserting the checklist text never repeats those specifics.
+- **Gated on `paths`, not on file content**: cheaper (paths are already on the event, no
+  extra parsing), and matches the same signal `RouteModel`'s complexity criteria already uses
+  for the same reason (see "Complexity criteria: an explicit size clause" below) — a
+  path-based heuristic, not a guarantee, but a reasonable proxy that costs nothing extra to
+  compute.
+- **Alternatives considered**: Scanning `diff_text` content for keywords instead of `paths`
+  (rejected — more expensive, and `paths` already carries the same signal at effectively zero
+  cost); a separate, dedicated LLM call for security-only review (rejected — spends a second
+  generative call, which Principle III reserves for InvokeLLM's single review call; the
+  checklist achieves the same effect inside the one call already being made).
+
+## High-tier reasoning: why Gemini, not Groq
+
+- **Decision**: `LLM_MODELS_HIGH` is `gemini:gemini-3.5-flash:high,groq:openai/gpt-oss-120b:medium`
+  — Gemini `:high` **leads**, Groq `:medium` is the **fallback**, the reverse of low/medium's
+  order (both lead with Groq). Gemini's client-level read timeout, and the router's
+  pre-attempt deadline budget, are both Gemini-high-specific overrides
+  (`GEMINI_HIGH_REASONING_READ_TIMEOUT_SECONDS = 90`, `GEMINI_HIGH_REASONING_ATTEMPT_BUDGET_MS`),
+  not a change to the shared defaults every other entry still uses. `invoke-llm`'s Lambda
+  timeout goes from 150 s to 180 s to keep real margin for the new worst case.
+- **Why Gemini leads instead of falling back**: the first version of this decision put Groq
+  `:medium` first and Gemini `:high` second, matching low/medium's pattern. In practice, Groq
+  `:medium` succeeds on the first attempt most of the time (confirmed across PR #3, #5, #7 —
+  `fell_back: false` every time), so the deeper Gemini `:high` pass would be reached only on
+  the rare attempt where Groq itself failed — making the high tier behave like medium's
+  configuration in practice, despite being configured differently, and defeating the whole
+  point of giving high-complexity PRs deeper scrutiny. Leading with Gemini `:high` means every
+  high-tier review gets the deeper pass by default; Groq `:medium` only runs when Gemini
+  itself fails (rate limit, overload, or the deadline check finding too little time left).
+- **Why not Groq `:high`, measured directly**: the task's own suggestion was reasoning effort
+  `high` plus a bigger output cap on Groq. Tested live against a realistic high-tier prompt
+  (PR #3's diff + 3 RAG context files, ~2,790 prompt tokens on Groq's tokenizer): at `high`
+  effort with `max_completion_tokens: 4800`, the entire cap was spent on reasoning and the
+  call returned **empty content** (`finish_reason: "length"`, 4,798 of 4,800 completion
+  tokens on reasoning alone) — this is `LlmOutputTruncatedError` territory, and it happens
+  reliably at this prompt size, not occasionally. Raising the cap doesn't help either: Groq's
+  8,000 TPM ceiling is a *pre-flight* check on `prompt_tokens + max_completion_tokens`
+  regardless of tokens actually used, so a bigger cap on a ~2,790-token prompt crosses 8,000
+  and gets an instant 413 instead. Every realistic high-tier prompt (RAG context pushes most
+  of them well above 1,000 tokens) is stuck between "cap too small → truncates" and "cap too
+  big → instant 413". Forcing Groq to `:high` here would take today's working first-attempt
+  (proven in production on PR #3, #5, #7 — `fell_back: false` every time) and make it fail
+  almost every time, adding ~10 s of wasted latency and quota before Gemini does the real
+  work regardless.
+- **Why Gemini `:high` works, measured directly**: the same realistic prompt against
+  `gemini-3.5-flash` at `thinkingLevel: "high"` returned valid JSON with **6 comments**
+  (`thoughtsTokenCount: 15018`) vs. **2 comments** at `thinkingLevel: "low"`
+  (`thoughtsTokenCount: 1166`) on the identical input — a real, substantive difference in
+  review depth, not a marginal one. Gemini's per-request ceiling is governed by its context
+  window (~1M tokens for `gemini-3.5-flash`), not a fixed small TPM number the way Groq's is,
+  so it doesn't hit the same wall.
+- **The cost is latency, which now has to be budgeted honestly**: the `high` call took 63.4 s
+  (vs. 9.6–31.2 s at `low` across separate measurements — real run-to-run variance already
+  observed). That exceeds the shared `READ_TIMEOUT_SECONDS = 45`, so without a dedicated
+  override this call would time out as a false `LlmTransientError` before Gemini even
+  answered. `GeminiClient.generate` now picks a 90 s read timeout specifically when
+  `reasoning == "high"` (45 s everywhere else), and the router's pre-attempt deadline check
+  uses a matching 95 s budget for that one entry (`_attempt_budget_ms`), so Lambda's own
+  timeout doesn't cut it off mid-request either.
+- **Lambda timeout raised 150 s → 180 s**: worst case for the high tier is Gemini's `:high`
+  attempt (first) failing after its full 95 s budget, then Groq's `:medium` fallback (second)
+  using its full 50 s — 145 s total either way the list is ordered, since the sum of the two
+  attempts' budgets doesn't depend on which runs first. 150 s left ~0 s of margin for that
+  path; 180 s leaves real headroom, and the deadline check before the second attempt (Groq's
+  50 s budget) is comfortably covered by whatever remains after Gemini's 95 s. This only
+  changes `invoke-llm`'s own Lambda timeout, not `codereview-infra`'s Step Functions `Retry`
+  (still `MaxAttempts: 1`, `IntervalSeconds: 30`), so the worst-case full failure is roughly
+  2 × 180 s + 30 s ≈ 6.5 minutes (up from ~5.5 minutes at 150 s) — still fine for a
+  non-blocking advisory check.
+- **Alternatives considered**: Groq `:medium` first, Gemini `:high` as fallback (the initial
+  version of this decision — superseded: it left the deeper pass almost never reached, since
+  Groq `:medium` rarely fails); a third, higher-TPM free-tier provider for the high tier
+  instead of retiming Gemini (e.g. Cerebras, 30K TPM on the same `gpt-oss-120b` model —
+  proposed separately as a fix for fallback-exhaustion on oversized diffs, not implemented
+  here); a flat, larger read timeout for every entry regardless of reasoning level (rejected —
+  needlessly extends the budget check for the low/medium tiers and every other high-tier
+  entry, none of which need anywhere near 90 s in practice).
+
+## Complexity criteria: an explicit size clause
+
+- **Decision**: Jev's `"high"` tier criteria text (`decision_engine.py`) gained a size clause:
+  "...OR changes more than roughly 400 lines or 10 files, regardless of what area it
+  touches", alongside the existing domain clause ("Touches auth, security, concurrency, or
+  many interconnected files").
+- **Why**: `RouteModel` sends `files_changed`/`lines_added`/`lines_removed`/`paths` to Jev,
+  whose criteria text is the only thing defining "high" — there is no line-count threshold in
+  code (the `LOW_MAX_LINES`/`MEDIUM_MAX_LINES`/`classify_by_line_count` constants exist only
+  for the local test stub, never read by the real `JevDecisionEngine`). Real classifications
+  confirmed the criteria worked exactly as written, and exposed the gap: PR #5 (4 files,
+  +12/-6, a Javadoc-only change) was classified `high`, purely because one changed path was
+  `auth/InMemoryUsers.java` — the domain clause working as intended, even on a tiny diff. PR
+  #8 (+686 lines, 11 files, no sensitive paths) was classified `medium` — nothing in the
+  criteria ever let size alone reach `high`.
+- **Residual uncertainty**: Jev is an external decision model, and criteria text is a
+  strong instruction, not a deterministic rule — there is no guarantee it is honored exactly
+  on every input, the same way an LLM-authored review comment isn't guaranteed either. This
+  is recorded honestly rather than promised as fixed.
+- **Alternatives considered**: Adding the size threshold as a second, code-side check ahead
+  of/instead of Jev (rejected — `RouteModel`'s own docstring and Principle III are explicit
+  that structured decisions like this belong to Jev, not a re-implemented rule in this repo);
+  a lower/different numeric threshold (400 lines / 10 files chosen to mirror the pre-existing
+  `MEDIUM_MAX_LINES = 400` stub constant, so the two don't silently disagree).
+
+## Per-call observability
+
+- **Decision**: `GeminiClient.generate` and `GroqClient.generate` now log `finish_reason`
+  (`finishReason` for Gemini) and the provider's own usage object on every successful call,
+  not only on failure.
+- **Why**: diagnosing PR #8's and #9's empty-but-valid reviews required reconstructing the
+  real prompt from S3 and replaying it against the same model/effort after the fact — and
+  even then, the replay's context chunks had already drifted from what was actually used,
+  because the RAG index had been rebuilt in the meantime, making the replay's numbers
+  unreliable evidence about the original call. The code had no record of what the model's
+  `finish_reason` or reasoning-token usage actually was at the time. Logging it on the
+  success path — the same information already logged on failure via `LlmOutputTruncatedError`
+  — makes this answerable directly from CloudWatch next time, without needing to replay
+  anything.
+- **Where it lives**: structured log lines (`logger.info`), not a new field on
+  `GeneratedReview`. Usage/finish_reason is per-attempt diagnostic detail, not something
+  `PostComment` or the Step Functions output needs to carry forward — adding it there would
+  grow the inline payload (`comments` already rides inline, see "Inline review comments") for
+  no consumer.
+
+## RetrieveContext: guarding against blank diff text
+
+- **Decision**: Before embedding the diff as a retrieval query, `RetrieveContext` checks that
+  its text is non-blank and raises `EmptyDiffError` (uncaught, failing the run visibly) if it
+  isn't, instead of calling the embeddings API with empty text.
+- **Why**: Gemini's `embedContent` rejects empty input with an HTTP 400, and that failure
+  path was previously unhandled here specifically — `EmbeddingError` would still have
+  surfaced it, just as Gemini's own opaque error text rather than a clear, named cause. A
+  docs-only PR was the originally-suspected trigger, but a docs-only diff is never actually
+  blank (`diff --git a/README.md b/README.md` plus a hunk header, at minimum) — the real risk
+  is a genuinely empty or truncated S3 object, e.g. an interrupted or partial write from
+  `codereview-app`'s upload step. That is a data-integrity problem, not a "nothing to review"
+  situation, so it degrades the same way a missing diff key already does (`StorageError` is
+  left uncaught, per the pre-existing "spec Edge Case" comment) rather than being silently
+  swallowed or treated like the missing-*index* case (which legitimately means "nothing to
+  compare yet" and does degrade gracefully).
+- **Alternatives considered**: Treating an empty diff like a missing index
+  (`index_available: false`-style graceful degradation) — rejected, because unlike a missing
+  index (an expected, benign state before develop's first indexing run), an empty diff object
+  should never happen at all and signals a real bug elsewhere in the pipeline; masking it
+  would only make that bug harder to notice.
 
 ## Duplicate-delivery handling
 
