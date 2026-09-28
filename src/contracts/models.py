@@ -63,14 +63,41 @@ class RetrievedContext(BaseModel):
     index_available: bool = True
 
 
+class CommentCategory(StrEnum):
+    """What kind of real problem an inline comment is about — never praise or description,
+    which belong in GeneratedReview.summary instead (research.md's "Review quality rubric")."""
+
+    BUG = "bug"
+    SECURITY = "security"
+    PERFORMANCE = "performance"
+    MAINTAINABILITY = "maintainability"
+
+
+class CommentSeverity(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
 class ReviewCommentDraft(BaseModel):
-    """One inline observation the model tied to a specific line of the diff, before posting."""
+    """One inline observation the model tied to a specific line of the diff, before posting.
+
+    `category` and `severity` are required, not optional metadata: build_prompt's rubric
+    instructs the model that every entry in `comments` must be a real problem in one of the
+    four categories, with a severity — never praise or a description of what the code does.
+    A response missing either on some comment fails ReviewCommentDraft validation, which
+    parse_review_response treats the same as any other shape mismatch (falls back to
+    summary-only, `parse_fallback: true`), rather than silently accepting an unclassified
+    comment.
+    """
 
     path: str = Field(min_length=1)
     # Line number in the file AFTER the change (the diff's "+"/right side) — this is what
     # GitHub's Reviews API expects paired with `side: "RIGHT"` (see integrations/github.py).
     line: int = Field(gt=0)
     body: str = Field(min_length=1)
+    category: CommentCategory
+    severity: CommentSeverity
 
 
 class GeneratedReview(BaseModel):

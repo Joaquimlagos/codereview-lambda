@@ -17,6 +17,8 @@ from contracts.models import Complexity
 from integrations.config import ConfigError
 from integrations.llm_router import (
     ATTEMPT_TIME_BUDGET_MS,
+    GEMINI_HIGH_REASONING_ATTEMPT_BUDGET_MS,
+    GEMINI_HIGH_REASONING_READ_TIMEOUT_SECONDS,
     GeminiClient,
     GroqClient,
     LlmModelNotFoundError,
@@ -26,8 +28,10 @@ from integrations.llm_router import (
     ModelClient,
     ModelSpec,
     MultiProviderLlmRouter,
+    build_prompt,
     models_for_complexity,
     parse_model_spec,
+    parse_review_response,
 )
 
 REVIEW_JSON = json.dumps({"summary": "Adds logging.", "comments": []})
@@ -410,6 +414,41 @@ def test_gemma_style_fenced_response_parses(monkeypatch):
     assert review.summary == "Gemma review."
 
 
+def test_comment_missing_severity_is_discarded_not_the_whole_response(caplog):
+    """A single malformed comment must not nuke a good summary and the other, valid comment:
+    only that one comment is dropped, parse_fallback stays False, and the drop is logged."""
+    raw = json.dumps(
+        {
+            "summary": "Two comments, one malformed.",
+            "comments": [
+                {
+                    "path": "src/a.py",
+                    "line": 10,
+                    "body": "Missing null check.",
+                    "category": "bug",
+                    "severity": "high",
+                },
+                {
+                    "path": "src/b.py",
+                    "line": 20,
+                    "body": "No severity here.",
+                    "category": "bug",
+                    # 'severity' missing.
+                },
+            ],
+        }
+    )
+
+    with caplog.at_level("WARNING"):
+        review = parse_review_response(raw, pr_id="42", model_used="groq:openai/gpt-oss-120b:low")
+
+    assert review.parse_fallback is False
+    assert review.summary == "Two comments, one malformed."
+    assert len(review.comments) == 1
+    assert review.comments[0].path == "src/a.py"
+    assert "discarded 1 of 2 comment(s)" in caplog.text
+
+
 # --- output-limit truncation and Groq output budget --------------------------------------
 
 
@@ -548,3 +587,194 @@ def test_413_on_every_model_raises_transient_naming_each_model(monkeypatch):
     message = str(exc_info.value)
     assert "groq:openai/gpt-oss-120b:medium" in message and "Request too large" in message
     assert "gemini:gemini-3.5-flash:low" in message and "payload too large" in message
+
+
+# --- Review quality rubric: category/severity, no praise, security checklist -------------
+
+
+def test_build_prompt_requires_category_and_severity_and_forbids_praise():
+    prompt = build_prompt("+diff", paths=["src/App.java"])
+
+    assert '"category"' in prompt
+    assert '"severity"' in prompt
+    assert "never praise" in prompt
+    for category in ("bug", "security", "performance", "maintainability"):
+        assert category in prompt
+
+
+def test_build_prompt_omits_security_checklist_for_non_sensitive_paths():
+    prompt = build_prompt("+diff", paths=["src/main/java/app/tasks/TaskController.java"])
+
+    assert "user enumeration" not in prompt.lower()
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/main/java/app/auth/AuthController.java",
+        "src/main/java/app/security/SecurityConfig.java",
+        "src/main/java/app/JwtValidator.java",
+        "src/main/java/app/CryptoUtils.java",
+        "src/main/java/app/PasswordEncoder.java",
+        "src/main/java/app/SessionManager.java",
+        "src/main/java/app/LoginController.java",
+        "src/main/java/app/TokenService.java",
+    ],
+)
+def test_build_prompt_adds_security_checklist_for_sensitive_paths(path):
+    prompt = build_prompt("+diff", paths=[path])
+
+    assert "user enumeration" in prompt.lower()
+    assert "credentials, tokens, or passwords written to logs" in prompt.lower()
+
+
+def test_build_prompt_security_checklist_is_generic_not_pr3_specific():
+    """The checklist must describe categories of security issue, not name this repo's own
+    demo PR's specific bugs (clock skew hours, InMemoryUsers, etc.) — otherwise it would only
+    help that one PR, not a real auth change."""
+    prompt = build_prompt("+diff", paths=["src/main/java/app/auth/JwtValidator.java"])
+
+    assert "clock skew" not in prompt.lower()
+    assert "InMemoryUsers" not in prompt
+    assert "24" not in prompt.split("=== DIFF")[0]
+
+
+def test_build_prompt_checklist_triggers_on_any_path_not_only_the_diff():
+    """`paths` is the event's full changed-file list — a security-sensitive file elsewhere in
+    the same PR must still trigger the checklist, even if `diff_text` itself is something
+    else (e.g. this file came from context, or diff_text covers multiple files)."""
+    prompt = build_prompt("+diff touching README.md only", paths=["README.md", "src/auth/Jwt.java"])
+
+    assert "user enumeration" in prompt.lower()
+
+
+# --- Per-call observability: finish_reason/usage logged on success, not only on failure ---
+
+
+def test_gemini_logs_finish_reason_and_usage_on_success(caplog):
+    body = _gemini_ok({"text": REVIEW_JSON})
+    body._body["usageMetadata"] = {"promptTokenCount": 10, "candidatesTokenCount": 5}
+
+    with caplog.at_level("INFO"):
+        _gemini(FakeSession(body)).generate("gemini-3.5-flash", "p")
+
+    assert any(
+        "gemini:gemini-3.5-flash" in r.message and "usage=" in r.message for r in caplog.records
+    )
+
+
+def test_groq_logs_finish_reason_and_usage_on_success(caplog):
+    body = _groq_ok(REVIEW_JSON)
+    body._body["usage"] = {"prompt_tokens": 10, "completion_tokens": 5}
+
+    with caplog.at_level("INFO"):
+        _groq(FakeSession(body)).generate("openai/gpt-oss-120b", "p")
+
+    assert any(
+        "groq:openai/gpt-oss-120b" in r.message and "usage=" in r.message for r in caplog.records
+    )
+
+
+# --- Gemini "high" reasoning: its own (much larger) timeout and attempt budget ------------
+
+
+def test_gemini_high_reasoning_uses_a_larger_read_timeout():
+    session = FakeSession(_gemini_ok({"text": REVIEW_JSON}))
+
+    _gemini(session).generate("gemini-3.5-flash", "p", reasoning="high")
+
+    assert session.requests[0]["timeout"] == (5, GEMINI_HIGH_REASONING_READ_TIMEOUT_SECONDS)
+
+
+def test_gemini_low_reasoning_still_uses_the_default_read_timeout():
+    session = FakeSession(_gemini_ok({"text": REVIEW_JSON}))
+
+    _gemini(session).generate("gemini-3.5-flash", "p", reasoning="low")
+
+    assert session.requests[0]["timeout"] == (5, 45)
+
+
+def test_deadline_check_uses_the_larger_budget_for_a_gemini_high_attempt(monkeypatch):
+    """Enough time for a normal (50s) attempt but not for Gemini's high-reasoning (95s)
+    attempt must still stop before starting it — the per-spec budget, not the flat default,
+    is what the router checks. Deliberately lists Groq first here (unlike the real
+    LLM_MODELS_HIGH, which leads with Gemini — see the next test) so the budget check is
+    exercised on the *second* attempt, proving it's keyed to the spec, not its position."""
+    monkeypatch.setenv(
+        "LLM_MODELS_HIGH", "groq:openai/gpt-oss-120b:medium,gemini:gemini-3.5-flash:high"
+    )
+    groq = FakeClient({"openai/gpt-oss-120b": LlmTransientError("HTTP 503")})
+    gemini = FakeClient({"gemini-3.5-flash": REVIEW_JSON})
+    remaining = iter([150_000, GEMINI_HIGH_REASONING_ATTEMPT_BUDGET_MS - 1])
+    router = _router({"groq": groq, "gemini": gemini}, remaining_time_ms=lambda: next(remaining))
+
+    with pytest.raises(LlmTransientError) as exc_info:
+        router.generate_review(pr_id="42", diff_text="+x", complexity=Complexity.HIGH)
+
+    assert gemini.calls == []
+    assert "Not attempted: gemini:gemini-3.5-flash:high" in str(exc_info.value)
+
+
+def test_enough_time_for_gemini_high_budget_lets_the_attempt_run(monkeypatch):
+    monkeypatch.setenv(
+        "LLM_MODELS_HIGH", "groq:openai/gpt-oss-120b:medium,gemini:gemini-3.5-flash:high"
+    )
+    groq = FakeClient({"openai/gpt-oss-120b": LlmTransientError("HTTP 503")})
+    gemini = FakeClient({"gemini-3.5-flash": REVIEW_JSON})
+    router = _router(
+        {"groq": groq, "gemini": gemini},
+        remaining_time_ms=lambda: GEMINI_HIGH_REASONING_ATTEMPT_BUDGET_MS,
+    )
+
+    review = router.generate_review(pr_id="42", diff_text="+x", complexity=Complexity.HIGH)
+
+    assert review.model_used == "gemini:gemini-3.5-flash:high"
+    assert review.fell_back is True
+
+
+def test_real_high_tier_order_leads_with_gemini_high_not_as_a_rare_fallback(monkeypatch):
+    """LLM_MODELS_HIGH's actual order: gemini:gemini-3.5-flash:high first,
+    groq:openai/gpt-oss-120b:medium as the fallback — the reverse of low/medium, which both
+    lead with Groq. With plenty of time, Gemini's high-reasoning pass runs on the very first
+    attempt (not reached only when Groq happens to fail); with too little time for even that
+    first attempt's 95s budget, the router stops before trying anything at all."""
+    monkeypatch.setenv(
+        "LLM_MODELS_HIGH", "gemini:gemini-3.5-flash:high,groq:openai/gpt-oss-120b:medium"
+    )
+    gemini = FakeClient({"gemini-3.5-flash": REVIEW_JSON})
+    groq = FakeClient({"openai/gpt-oss-120b": REVIEW_JSON})
+
+    plenty_of_time = _router(
+        {"gemini": gemini, "groq": groq},
+        remaining_time_ms=lambda: GEMINI_HIGH_REASONING_ATTEMPT_BUDGET_MS,
+    )
+    review = plenty_of_time.generate_review(pr_id="42", diff_text="+x", complexity=Complexity.HIGH)
+    assert review.model_used == "gemini:gemini-3.5-flash:high"
+    assert review.fell_back is False
+    assert groq.calls == []
+
+    too_little_time = _router(
+        {"gemini": gemini, "groq": groq},
+        remaining_time_ms=lambda: GEMINI_HIGH_REASONING_ATTEMPT_BUDGET_MS - 1,
+    )
+    with pytest.raises(LlmTransientError) as exc_info:
+        too_little_time.generate_review(pr_id="42", diff_text="+x", complexity=Complexity.HIGH)
+    assert "Stopped before gemini:gemini-3.5-flash:high" in str(exc_info.value)
+    assert gemini.calls == [("gemini-3.5-flash", "high")]  # from the first call above only
+    assert groq.calls == []
+
+
+def test_paths_are_threaded_from_generate_review_into_the_prompt(monkeypatch):
+    monkeypatch.setenv("LLM_MODELS_MEDIUM", "gemini:gemini-3.5-flash:low")
+    session = FakeSession(_gemini_ok({"text": REVIEW_JSON}))
+    router = _router({"gemini": _gemini(session)})
+
+    router.generate_review(
+        pr_id="42",
+        diff_text="+diff",
+        complexity=Complexity.MEDIUM,
+        paths=["src/auth/Jwt.java"],
+    )
+
+    sent_prompt = session.requests[0]["payload"]["contents"][0]["parts"][0]["text"]
+    assert "user enumeration" in sent_prompt.lower()

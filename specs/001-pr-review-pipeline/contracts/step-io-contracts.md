@@ -94,6 +94,13 @@ vector space produces a plausible-looking but meaningless ranking:
 A mismatch on either is a hard failure. A *missing* index object is different in kind — it only
 means develop has not been indexed yet — and degrades to `indexAvailable: false` with no chunks.
 
+The diff itself (`diffKey`) is read before embedding it as the query. If it is empty or
+whitespace-only, `RetrieveContext` raises `EmptyDiffError` rather than sending blank text to
+the embeddings API (which would fail with its own opaque HTTP 400) or degrading silently: a
+real diff is never actually blank (a docs-only PR's diff still has `diff --git`/hunk headers),
+so an empty object at this key can only be a data problem — a truncated or otherwise
+incomplete write to S3 — and MUST fail the run visibly like any other unreadable diff.
+
 **Output** (`RetrievedContext` — returned flat; nested under `$.context`):
 ```json
 {
@@ -111,22 +118,35 @@ the embedded diff. `index_available` is `false` only in the missing-index case a
 (`RoutingDecision`), and `context` (`RetrievedContext`) when `RetrieveContext` ran (the key is
 absent from the event entirely when it was skipped, per FR-005).
 
-`InvokeLLM` instructs Gemini (via `build_prompt`, `src/integrations/llm_router.py`) to reply
-with ONLY a JSON object shaped `{"summary": "string", "comments": [{"path", "line", "body"}]}`,
-with the diff's hunk headers preserved so the model can work out each `line`'s post-change
-number. `parse_review_response` parses that response defensively: if it isn't valid JSON in
-that shape, the whole raw response becomes `summary` and `comments` is forced to `[]`
-(`parse_fallback: true` on the result) rather than failing the run — see research.md's
-"Inline review comments" decision for why this degrades instead of raising. A genuinely *empty*
-response is still a hard failure (`LlmRouterError`), unchanged from before.
+`InvokeLLM` instructs the model (via `build_prompt`, `src/integrations/llm_router.py`) to
+reply with ONLY a JSON object shaped `{"summary": "string", "comments": [{"path", "line",
+"body", "category", "severity"}]}`, with the diff's hunk headers preserved so the model can
+work out each `line`'s post-change number. `category` and `severity` are required on every
+comment — the prompt's rubric instructs the model that `comments` is only for real problems
+(never praise or description, which belong in `summary`) and to actively check each of the
+four categories rather than default to an empty list (research.md, "Review quality rubric").
+When any changed path looks auth/security-adjacent, a generic security checklist is appended
+(credential logging, user enumeration, signature/expiry bypass, missing authorization,
+hardcoded secrets). `parse_review_response` parses the response defensively, at two levels:
+if the raw text isn't valid JSON, isn't an object, or `summary`/`comments` don't have the
+right shape, the whole raw response becomes `summary` and `comments` is forced to `[]`
+(`parse_fallback: true` on the result) rather than failing the run. Once that top-level shape
+is confirmed, each comment is then parsed independently — one missing/invalid `category` or
+`severity` only discards that one comment (logged, with a count), it does not affect
+`summary` or any other, otherwise-valid comment, and `parse_fallback` stays `false`. See
+research.md's "Inline review comments" decision for why this degrades instead of raising. A
+genuinely *empty* response is still a hard failure (`LlmRouterError`), unchanged from before.
 
 **Model fallback**: each complexity tier resolves to an ordered list of
 `provider:model[:reasoning]` entries (`LLM_MODELS_LOW/MEDIUM/HIGH`, comma-separated; providers
 `gemini` and `groq`). `InvokeLLM` tries them in order, moving to the next entry when a model
 fails transiently or no longer exists; any other failure stops immediately. Before each
-attempt it stops if the Lambda has less than one full attempt's time left (50 s). The entry
-that answered is reported in `model_used` (e.g. `"groq:openai/gpt-oss-120b:low"`), and
-`fell_back` is `true` when it wasn't the tier's first choice.
+attempt it stops if the Lambda has less than that attempt's own time budget left — 50 s for
+every entry except the high tier's `gemini:gemini-3.5-flash:high`, which needs 95 s (measured
+up to 63 s in practice, with real run-to-run variance; see research.md, "High-tier reasoning:
+why Gemini, not Groq"). The entry that answered is reported in `model_used` (e.g.
+`"groq:openai/gpt-oss-120b:low"`), and `fell_back` is `true` when it wasn't the tier's first
+choice.
 
 **Errors** (the Lambda `errorType` Step Functions sees):
 
@@ -152,7 +172,7 @@ fallback" decisions.
 {
   "pr_id": "string",
   "summary": "string",
-  "comments": [{ "path": "string", "line": 1, "body": "string" }],
+  "comments": [{ "path": "string", "line": 1, "body": "string", "category": "bug | security | performance | maintainability", "severity": "low | medium | high" }],
   "model_used": "string",
   "fell_back": false,
   "parse_fallback": false
@@ -173,12 +193,15 @@ the top-level `repository` field (which GitHub repo to post to), and the top-lev
 
 `PostComment` posts `summary` + `comments` as one GitHub PR review via
 `POST /repos/{repo}/pulls/{pr}/reviews`, body `{"commit_id": sha, "body": summary,
-"event": "COMMENT", "comments": [{"path", "line", "side": "RIGHT", "body"}]}`. `event` is
-always `"COMMENT"` — never `APPROVE`/`REQUEST_CHANGES` — so the AI review stays advisory/
-non-blocking. GitHub rejects the whole review with **422** if any comment's `line` isn't part
-of the diff; `RestGitHubClient` catches that and falls back to a single plain comment via
-`POST /repos/{repo}/issues/{pr}/comments` (`summary` + each comment's `path:line — body`
-concatenated as text) rather than losing the review outright.
+"event": "COMMENT", "comments": [{"path", "line", "side": "RIGHT", "body"}]}`. Each comment's
+`body` is `**[category · severity]** <the model's body text>` (`_render_comment_body`) — the
+Reviews API has no dedicated fields for category/severity, so they're prefixed into the text
+GitHub actually displays. `event` is always `"COMMENT"` — never `APPROVE`/`REQUEST_CHANGES` —
+so the AI review stays advisory/non-blocking. GitHub rejects the whole review with **422** if
+any comment's `line` isn't part of the diff; `RestGitHubClient` catches that and falls back to
+a single plain comment via `POST /repos/{repo}/issues/{pr}/comments` (`summary` + each
+comment's `path:line — ` + its rendered `**[category · severity]** body`, concatenated as
+text) rather than losing the review outright.
 
 **Output** (`ReviewComment` — returned flat; nested under `$.postComment`):
 ```json

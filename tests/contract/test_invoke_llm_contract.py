@@ -22,7 +22,13 @@ def test_invoke_llm_output_matches_generated_review_contract(
 
 def test_invoke_llm_output_carries_inline_comments(pr_event, stub_storage, stub_llm_router):
     stub_llm_router.comments = [
-        {"path": "src/app.py", "line": 5, "body": "Consider logging the exception too."}
+        {
+            "path": "src/app.py",
+            "line": 5,
+            "body": "Consider logging the exception too.",
+            "category": "maintainability",
+            "severity": "low",
+        }
     ]
     event = {**pr_event, "routing": {"complexity": "low", "needsContext": False}}
 
@@ -32,6 +38,8 @@ def test_invoke_llm_output_carries_inline_comments(pr_event, stub_storage, stub_
     assert len(validated.comments) == 1
     assert validated.comments[0].path == "src/app.py"
     assert validated.comments[0].line == 5
+    assert validated.comments[0].category.value == "maintainability"
+    assert validated.comments[0].severity.value == "low"
 
 
 def test_invoke_llm_degrades_gracefully_on_malformed_llm_response(

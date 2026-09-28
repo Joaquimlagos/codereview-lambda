@@ -56,7 +56,9 @@ class JevDecisionEngine(DecisionEngine):
                         "low": "Trivial change: docs, config, renames, no business logic",
                         "medium": "Common business logic, limited scope, few files",
                         "high": (
-                            "Touches auth, security, concurrency, or many interconnected files"
+                            "Touches auth, security, concurrency, or many interconnected "
+                            "files; OR changes more than roughly 400 lines or 10 files, "
+                            "regardless of what area it touches"
                         ),
                     },
                 },
