@@ -24,8 +24,13 @@ import math
 from contracts.models import ContextChunk, PullRequestEvent, RetrievedContext
 from integrations.config import require_env
 from integrations.embeddings import EmbeddingClient, GeminiEmbeddingClient
+from integrations.logging_config import configure_project_logging
 from integrations.secrets import resolve_api_key
 from integrations.storage import S3Storage, Storage, StorageError
+
+# Raises this project's own loggers to INFO (root logger and third-party loggers
+# untouched) — see integrations/logging_config.py.
+configure_project_logging()
 
 # Published by codereview-app's index-codebase.yml workflow on every push to develop.
 INDEX_KEY = "index/develop/index.json"

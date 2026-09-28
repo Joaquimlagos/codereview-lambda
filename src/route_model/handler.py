@@ -9,7 +9,12 @@ needsContext answer comes back true.
 from contracts.models import Complexity, PullRequestEvent, RoutingDecision
 from integrations.config import require_env
 from integrations.decision_engine import DecisionEngine, DecisionEngineError, JevDecisionEngine
+from integrations.logging_config import configure_project_logging
 from integrations.secrets import resolve_api_key
+
+# Raises this project's own loggers to INFO (root logger and third-party loggers
+# untouched) — see integrations/logging_config.py.
+configure_project_logging()
 
 # Fixed fallback when Jev is unavailable/invalid, so the run still reaches a terminal outcome
 # (spec.md Assumptions; SC-005) — a whole-pipeline concern, not User Story 2's. Field name is
