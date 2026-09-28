@@ -16,7 +16,12 @@ than as whoever owns a personal access token (see research.md, "GitHub App authe
 from contracts.models import GeneratedReview
 from integrations.config import require_env
 from integrations.github import GitHubAppAuth, GitHubClient, RestGitHubClient
+from integrations.logging_config import configure_project_logging
 from integrations.secrets import resolve_secret_file
+
+# Raises this project's own loggers to INFO (root logger and third-party loggers
+# untouched) — see integrations/logging_config.py.
+configure_project_logging()
 
 # App ID and installation ID are identifiers, not secrets: plain env vars (FR-009).
 GITHUB_APP_ID_ENV = "GITHUB_APP_ID"

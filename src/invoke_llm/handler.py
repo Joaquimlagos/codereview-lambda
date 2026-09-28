@@ -16,8 +16,14 @@ from integrations.llm_router import (
     LlmRouter,
     MultiProviderLlmRouter,
 )
+from integrations.logging_config import configure_project_logging
 from integrations.secrets import resolve_api_key
 from integrations.storage import S3Storage, Storage
+
+# Raises this module's and integrations.llm_router's loggers to INFO (root logger and
+# third-party loggers untouched) so llm_router.py's per-call finish_reason/usage lines on
+# success — not just failure — actually reach CloudWatch (integrations/logging_config.py).
+configure_project_logging()
 
 # Local .env/env var fallback, else Secrets Manager via the secret ARN Terraform sets as an env var
 # (this function's execution role MUST NOT have access to route-model's TypeSafe secret).

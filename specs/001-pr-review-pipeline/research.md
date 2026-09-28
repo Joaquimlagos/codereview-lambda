@@ -829,6 +829,24 @@ timeout math at the end of this section is superseded (three entries, not two �
   `PostComment` or the Step Functions output needs to carry forward — adding it there would
   grow the inline payload (`comments` already rides inline, see "Inline review comments") for
   no consumer.
+- **Bug found post-deploy: the INFO logs never actually reached CloudWatch.** Verifying PR #8
+  and #13's Cerebras-fallback runs, the CloudWatch log stream for a successful call showed
+  only `WARNING`-level failure lines (e.g. Gemini's 503) — the `logger.info` success line
+  right after was simply absent, even though the call clearly succeeded per the Step
+  Functions output. Cause: nothing in this codebase ever configured a logging level, so
+  Python's root logger sat at its default (`WARNING`), and every `logging.getLogger(__name__)`
+  call (NOTSET by default) deferred to it — silently dropping every `logger.info` call this
+  decision added. **Fix**: `integrations/logging_config.py`'s `configure_project_logging()`,
+  called once at import time from each of the four handler.py modules, sets each of this
+  repo's own top-level logger names (`integrations`, `invoke_llm`, `route_model`,
+  `retrieve_context`, `post_comment`) to `INFO` individually — not the root logger — so a
+  child logger like `integrations.llm_router` resolves to `INFO` via that ancestor, while
+  boto3/botocore/urllib3 and anything else outside this project's own packages stay at
+  whatever level they were already at. A Terraform-level fix (Lambda's `logging_config` /
+  `application_log_level`) was considered and rejected: it can only raise the *root* logger
+  (there's no per-logger scoping at that layer), which would have let every third-party
+  library's INFO logs through too, and it requires switching `log_format` to `"JSON"` as a
+  precondition — a bigger, unrelated change to the log output format itself.
 
 ## RetrieveContext: guarding against blank diff text
 
