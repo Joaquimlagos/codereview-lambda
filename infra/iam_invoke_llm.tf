@@ -120,17 +120,16 @@ resource "aws_lambda_function" "invoke_llm" {
   role          = aws_iam_role.invoke_llm.arn
   handler       = "invoke_llm.handler.handler"
   runtime       = "python3.14"
-  # 230s: LLM_MODELS_HIGH now has three entries (gemini:high, cerebras:medium, groq:medium —
-  # added so a large diff that exhausts Gemini's timeout AND Groq's 8K TPM ceiling still has
-  # a real fallback, see research.md's "Cerebras as a third fallback provider"). Most
+  # 230s: LLM_MODELS_HIGH has three entries, cerebras:medium, groq:medium, gemini:high (in
+  # that order since 2026-09-28; research.md, "High tier: Cerebras first, Gemini last"). Most
   # attempts allow 5s to connect + 45s to read (50s budget); Gemini's high entry needs far
   # more — measured 63s on a realistic prompt, with real run-to-run variance — so it gets its
   # own 5s + 90s budget (95s; llm_router.py's GEMINI_HIGH_REASONING_*). Worst case is all
-  # three attempts failing: Gemini's high attempt (95s) + Cerebras' medium fallback (50s) +
-  # Groq's medium fallback (50s) = 195s raw, plus cold start and the secret fetch; 230s keeps
-  # the same ~35s margin the previous 180s gave the old (145s raw) two-entry worst case,
-  # instead of shrinking it as a third attempt was added. The router still checks the
-  # remaining time before every attempt (against that attempt's own budget) and stops with
+  # three attempts failing: Cerebras' medium attempt (50s) + Groq's medium fallback (50s) +
+  # Gemini's high last resort (95s) = 195s raw, plus cold start and the secret fetch, leaving
+  # a ~35s margin. With Gemini last, the router's pre-attempt check still lets it run after
+  # two slow failures (~120s left against its 95s budget). The router checks the remaining
+  # time before every attempt (against that attempt's own budget) and stops with
   # LlmTransientError rather than being cut off by Lambda's own timeout.
   timeout = 230
   # 256 MB: at 128 MB a cold start alone used ~104 MB (boto3 + pydantic), and Lambda
@@ -146,9 +145,12 @@ resource "aws_lambda_function" "invoke_llm" {
   # providers (research.md, "Multi-provider model fallback" and "Cerebras as a third fallback
   # provider", has the measurements). LOW/MEDIUM lead with Groq, then Cerebras, then Gemini —
   # Cerebras keeps Groq's own reasoning effort for that tier, since it serves the identical
-  # gpt-oss-120b model. HIGH leads with Gemini's deeper reasoning pass, then Cerebras at
-  # medium (its 30K TPM ceiling covers a large diff Groq's 8K can't), then Groq's medium as
-  # the last resort.
+  # gpt-oss-120b model. HIGH leads with Cerebras at medium (its 30K TPM ceiling covers a
+  # large diff Groq's 8K can't), then Groq at medium, then Gemini's high reasoning pass as the
+  # last resort: Gemini returned 503 on 12 of 12 measured high-tier runs and allows only 20
+  # requests per day, while Cerebras at `high` spent its whole 12,000-token output budget on
+  # reasoning 4 of 4 times. So the high tier now runs the same model and effort as medium;
+  # research.md, "High tier: Cerebras first, Gemini last", records that cost.
   # The API keys are deliberately NOT set here: no secret value ever lands in Terraform
   # state. The *_SECRET_ARN values are only the secrets' ARNs (identifiers, not values),
   # taken from the same SSM-published data sources this role's GetSecretValue policies are
@@ -164,7 +166,7 @@ resource "aws_lambda_function" "invoke_llm" {
       CEREBRAS_API_KEY_SECRET_ARN = data.aws_ssm_parameter.cerebras_api_key_arn.value
       LLM_MODELS_LOW              = "groq:openai/gpt-oss-120b:low,cerebras:gpt-oss-120b:low,gemini:gemini-3.5-flash:low"
       LLM_MODELS_MEDIUM           = "groq:openai/gpt-oss-120b:medium,cerebras:gpt-oss-120b:medium,gemini:gemini-3.5-flash:low"
-      LLM_MODELS_HIGH             = "gemini:gemini-3.5-flash:high,cerebras:gpt-oss-120b:medium,groq:openai/gpt-oss-120b:medium"
+      LLM_MODELS_HIGH             = "cerebras:gpt-oss-120b:medium,groq:openai/gpt-oss-120b:medium,gemini:gemini-3.5-flash:high"
     }
   }
 

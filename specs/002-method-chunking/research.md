@@ -336,6 +336,13 @@ cannot be settled by reading documentation.
   it is (see the decision above). For the "after" measurement: when Gemini's daily quota is
   used up, it answers 429 instead of 503, and the review still falls through to Cerebras,
   the same model as the baseline runs.
+- **Re-evaluated after T038 (2026-09-28).** With 503 on 12 of 12 high-tier runs (baseline and
+  after-measurement), the high tier became `cerebras:gpt-oss-120b:medium,
+  groq:openai/gpt-oss-120b:medium, gemini:gemini-3.5-flash:high`. Cerebras at `high` was
+  probed first and spent its whole 12,000-token output cap on reasoning 4 of 4 times, so
+  the lead stays at `medium`. Decision, measurements and cost (the high tier now runs the
+  same model and effort as medium) are in 001's research.md, "High tier: Cerebras first,
+  Gemini last".
 
 ## R15. Official free-tier limits (AI Studio, project `codereview`)
 

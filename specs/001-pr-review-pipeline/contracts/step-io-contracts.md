@@ -154,10 +154,12 @@ genuinely *empty* response is still a hard failure (`LlmRouterError`), unchanged
 
 **Model fallback**: each complexity tier resolves to an ordered list of
 `provider:model[:reasoning]` entries (`LLM_MODELS_LOW/MEDIUM/HIGH`, comma-separated; providers
-`gemini` and `groq`). `InvokeLLM` tries them in order, moving to the next entry when a model
+`gemini`, `groq` and `cerebras`; the high tier leads with Cerebras and keeps Gemini `:high` as
+the last resort — research.md, "High tier: Cerebras first, Gemini last"). `InvokeLLM` tries
+them in order, moving to the next entry when a model
 fails transiently or no longer exists; any other failure stops immediately. Before each
 attempt it stops if the Lambda has less than that attempt's own time budget left — 50 s for
-every entry except the high tier's `gemini:gemini-3.5-flash:high`, which needs 95 s (measured
+every entry except the high tier's last-resort `gemini:gemini-3.5-flash:high`, which needs 95 s (measured
 up to 63 s in practice, with real run-to-run variance; see research.md, "High-tier reasoning:
 why Gemini, not Groq"). The entry that answered is reported in `model_used` (e.g.
 `"groq:openai/gpt-oss-120b:low"`), and `fell_back` is `true` when it wasn't the tier's first
