@@ -112,3 +112,38 @@ def test_retrieve_context_rejects_empty_or_blank_diff(
             storage=storage,
             embedding_client=StubEmbeddingClient(vector=query_vector),
         )
+
+
+def test_context_chunk_accepts_both_the_v1_and_the_v2_shape():
+    """v1 chunks carry only path/text; v2 chunks add their location, header and ranking
+    (specs/002-method-chunking/contracts/retrieve-context-v2.md). Both must validate, so a
+    RetrievedContext built from either index version reaches InvokeLLM intact."""
+    v1 = RetrievedContext.model_validate(
+        {"pr_id": "3", "chunks": [{"path": "src/A.java", "text": "class A {}"}]}
+    )
+    v2 = RetrievedContext.model_validate(
+        {
+            "pr_id": "3",
+            "index_version": 2,
+            "chunks": [
+                {
+                    "path": "src/A.java",
+                    "text": "void run() {}",
+                    "id": "src/A.java#A.run():3-3",
+                    "start_line": 3,
+                    "end_line": 3,
+                    "header": "package a;\n\nclass A {",
+                    "score": 0.81,
+                    "matched_query": "src/B.java",
+                }
+            ],
+        }
+    )
+
+    assert v1.chunks[0].id is None and v1.index_version is None
+    assert v2.chunks[0].start_line == 3 and v2.index_version == 2
+    # A v1 chunk dumped the way RetrieveContext dumps it stays exactly {path, text}.
+    assert v1.chunks[0].model_dump(exclude_none=True) == {
+        "path": "src/A.java",
+        "text": "class A {}",
+    }

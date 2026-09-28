@@ -20,6 +20,13 @@ and `severity` — never praise or description, which belong in `summary` only �
 security checklist when any changed path looks auth-adjacent (research.md's "Review quality
 rubric"). Every successful call is logged (`finish_reason`/`finishReason` + token usage), not
 only failed ones.
+
+Retrieved context from a version 2 index (method-level chunks, specs/002-method-chunking)
+is sized per model attempt: each provider has a prompt budget (`PROMPT_TOKEN_BUDGET`), the
+context is packed best-first into what the instructions and diff leave of it, and a
+provider whose budget the diff alone already exceeds is skipped without being called. A
+version 1 context (whole files) keeps the pre-002 prompt exactly, so deploying this code
+before the index switches to version 2 changes nothing.
 """
 
 import json
@@ -30,6 +37,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from contracts.models import Complexity, ContextChunk, GeneratedReview, ReviewCommentDraft
+from contracts.token_estimate import estimate_tokens
 from integrations.config import ConfigError, require_env
 
 logger = logging.getLogger(__name__)
@@ -168,6 +176,13 @@ class LlmOutputTruncatedError(LlmTransientError):
     succeed, so the router moves on to the next one. It subclasses LlmTransientError so that
     if the whole list ends this way the router's summary error is retryable; it is never
     raised to Step Functions directly (the router always wraps failures in a summary)."""
+
+
+class LlmPromptTooLargeError(LlmRouterError):
+    """Raised when every model in the tier was skipped because the instructions and diff
+    alone exceed each provider's prompt budget (PROMPT_TOKEN_BUDGET). Not transient: the diff
+    will be just as large on a retry, so Step Functions must not spend retries on it (its
+    Retry matches LlmTransientError by name, which this is not)."""
 
 
 class LlmModelNotFoundError(LlmRouterError):
@@ -341,6 +356,36 @@ GROQ_MAX_COMPLETION_TOKENS: dict[str, int] = {"medium": 5500}
 # larger diff or a longer reasoning pass, while still being more than double Groq's 5,500 cap.
 # Low effort gets no explicit cap, mirroring Groq's own low-effort entries.
 CEREBRAS_MAX_COMPLETION_TOKENS: dict[str, int] = {"medium": 12000}
+
+# Largest prompt, in *estimated* tokens (contracts/token_estimate.py, which over-counts), each
+# provider is sent — what its free-tier tokens-per-minute ceiling leaves after reserving room
+# for the answer. Derived next to the output caps above on purpose: change one, revisit the
+# other. See specs/002-method-chunking/research.md, R9.
+#   groq medium: 8,000 TPM - 3,700 (largest measured medium output: 3,668). A starting point,
+#     not a proven ceiling — Groq accepted 8,758 *reserved* tokens on PR #7, so its limit is
+#     not a strict pre-flight on prompt + max_completion_tokens; T036 measures it. Too low is
+#     not "safe": every skipped Groq attempt lands on Cerebras, which allows only 5 RPM.
+#   groq low / no reasoning: 8,000 - 1,200 (largest measured low output: 1,073).
+#   cerebras: 30,000 TPM - 12,000 (CEREBRAS_MAX_COMPLETION_TOKENS["medium"]).
+#   gemini: context window ~1M; a ceiling well below it, to be confirmed against the current
+#     free-tier TPM.
+PROMPT_TOKEN_BUDGET: dict[tuple[str, str | None], int] = {
+    ("groq", "medium"): 4300,
+    ("groq", None): 6800,
+    ("cerebras", None): 18000,
+    ("gemini", None): 100000,
+}
+
+# Upper bound on retrieved context for every provider: more context dilutes a review as much
+# as too little starves it. ~2.5x the largest whole-file context in baseline.md.
+CONTEXT_TOKEN_CAP = 3000
+
+
+def prompt_budget(spec: ModelSpec) -> int:
+    """The budget for this entry: its reasoning level's, else the provider's default."""
+    return PROMPT_TOKEN_BUDGET.get(
+        (spec.provider, spec.reasoning), PROMPT_TOKEN_BUDGET[(spec.provider, None)]
+    )
 
 
 def _openai_compatible_generate(
@@ -540,15 +585,102 @@ def build_prompt(
     if _touches_security_sensitive_path(paths):
         prompt += _SECURITY_CHECKLIST
     prompt += "=== DIFF UNDER REVIEW ===\n" f"{diff_text}\n"
-    if context_chunks:
-        prompt += (
+    return prompt + context_section(context_chunks)
+
+
+def _is_located(chunks: list[ContextChunk] | None) -> bool:
+    """Chunks from a version 2 index know where they sit in their file; whole files don't."""
+    return bool(chunks) and any(chunk.start_line is not None for chunk in chunks)
+
+
+def context_section(context_chunks: list[ContextChunk] | None) -> str:
+    """The retrieved-context part of the prompt ("" when there is none).
+
+    Whole files (version 1 index) are listed one after another, exactly as before 002.
+    Method-level chunks (version 2) are grouped by file: files in order of their best
+    chunk, the file's header printed once (again only if a later chunk's header differs,
+    e.g. a nested type), then each chunk in line order with its line range.
+    """
+    if not context_chunks:
+        return ""
+    if not _is_located(context_chunks):
+        section = (
             "\n=== ADDITIONAL PROJECT CONTEXT ===\n"
             "Existing files from the repository, retrieved for reference only. They are NOT "
             "part of the change under review — do not report issues in them.\n"
         )
         for chunk in context_chunks:
-            prompt += f"\n--- {chunk.path} ---\n{chunk.text}\n"
-    return prompt
+            section += f"\n--- {chunk.path} ---\n{chunk.text}\n"
+        return section
+
+    by_file: dict[str, list[ContextChunk]] = {}
+    for chunk in context_chunks:  # rank order, so dict order = files by best chunk
+        by_file.setdefault(chunk.path, []).append(chunk)
+    section = (
+        "\n=== ADDITIONAL PROJECT CONTEXT ===\n"
+        "Existing code from the repository, retrieved for reference only. It is NOT part of "
+        "the change under review — do not report issues in it.\n"
+    )
+    for path, chunks in by_file.items():
+        section += f"\n--- {path} ---\n"
+        printed_header = None
+        for chunk in sorted(chunks, key=lambda c: c.start_line or 0):
+            if chunk.header and chunk.header != printed_header:
+                section += f"{chunk.header}\n"
+                printed_header = chunk.header
+            section += f"\n    [lines {chunk.start_line}-{chunk.end_line}]\n{chunk.text}\n"
+    return section
+
+
+@dataclass(frozen=True)
+class PackedPrompt:
+    """The prompt for one model attempt, and how its context was sized."""
+
+    prompt: str | None  # None when the attempt is skipped
+    budget: int
+    estimated_prompt: int
+    chunks_kept: int
+    chunks_dropped: int
+
+    @property
+    def skipped(self) -> bool:
+        return self.prompt is None
+
+
+def pack_prompt(
+    spec: ModelSpec,
+    diff_text: str,
+    context_chunks: list[ContextChunk] | None,
+    paths: list[str] | None,
+) -> PackedPrompt:
+    """Build the prompt for one attempt within that provider's budget (spec FR-023–FR-026).
+
+    Located (version 2) context is packed best-first: a chunk is kept only if the whole
+    context section still fits `min(CONTEXT_TOKEN_CAP, budget − instructions − diff)`, and a
+    chunk that doesn't fit is skipped whole, never truncated. When the instructions and diff
+    alone exceed the budget, the attempt is skipped (`prompt` is None) — the diff is never
+    trimmed. Version 1 context is passed through untouched (pre-002 behaviour).
+    """
+    chunks = list(context_chunks or [])
+    budget = prompt_budget(spec)
+    base = build_prompt(diff_text, None, paths)
+    base_tokens = estimate_tokens(base)
+
+    if not _is_located(chunks):
+        prompt = build_prompt(diff_text, chunks, paths)
+        return PackedPrompt(prompt, budget, estimate_tokens(prompt), len(chunks), 0)
+    if base_tokens > budget:
+        return PackedPrompt(None, budget, base_tokens, 0, len(chunks))
+
+    room = min(CONTEXT_TOKEN_CAP, budget - base_tokens)
+    kept: list[ContextChunk] = []
+    for chunk in chunks:
+        if estimate_tokens(context_section(kept + [chunk])) <= room:
+            kept.append(chunk)
+    prompt = base + context_section(kept)
+    return PackedPrompt(
+        prompt, budget, estimate_tokens(prompt), len(kept), len(chunks) - len(kept)
+    )
 
 
 def _strip_code_fence(text: str) -> str:
@@ -655,6 +787,25 @@ def parse_review_response(raw_text: str, pr_id: str, model_used: str) -> Generat
     )
 
 
+def _log_attempt(pr_id: str, spec: ModelSpec, packed: PackedPrompt) -> None:
+    """One machine-readable line per model attempt (specs/002-method-chunking/contracts/
+    retrieve-context-v2.md): what the prompt cost against that provider's budget."""
+    logger.info(
+        json.dumps(
+            {
+                "event": "llm_attempt",
+                "pr": int(pr_id) if pr_id.isdigit() else pr_id,
+                "model": spec.label,
+                "budget": packed.budget,
+                "estimated_prompt": packed.estimated_prompt,
+                "context_chunks_kept": packed.chunks_kept,
+                "context_chunks_dropped": packed.chunks_dropped,
+                "skipped": packed.skipped,
+            }
+        )
+    )
+
+
 class LlmRouter(ABC):
     @abstractmethod
     def generate_review(
@@ -713,11 +864,29 @@ class MultiProviderLlmRouter(LlmRouter):
         paths: list[str] | None = None,
     ) -> GeneratedReview:
         specs = models_for_complexity(complexity)
-        prompt = build_prompt(diff_text, context_chunks, paths)
         failures: list[str] = []
+        skipped: list[str] = []
         every_failure_was_model_gone = True
 
         for attempt, spec in enumerate(specs):
+            packed = pack_prompt(spec, diff_text, context_chunks, paths)
+            _log_attempt(pr_id, spec, packed)
+            if packed.skipped:
+                reason = (
+                    f"skipped, estimated prompt {packed.estimated_prompt} > budget "
+                    f"{packed.budget} without context"
+                )
+                skipped.append(spec.label)
+                failures.append(f"{spec.label}: {reason}")
+                logger.warning(
+                    "Skipping %s for PR %s: %s; %s",
+                    spec.label,
+                    pr_id,
+                    reason,
+                    "trying next model" if attempt + 1 < len(specs) else "no models left",
+                )
+                continue
+            prompt = packed.prompt
             budget_ms = _attempt_budget_ms(spec)
             if self._remaining_time_ms is not None and self._remaining_time_ms() < budget_ms:
                 failed = "; ".join(failures) or "none"
@@ -747,6 +916,8 @@ class MultiProviderLlmRouter(LlmRouter):
         summary = f"All {len(specs)} model(s) for tier {complexity.value!r} failed: " + "; ".join(
             failures
         )
+        if len(skipped) == len(specs):
+            raise LlmPromptTooLargeError(summary)
         if every_failure_was_model_gone:
             raise LlmModelNotFoundError(summary)
         raise LlmTransientError(summary)

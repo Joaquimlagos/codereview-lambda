@@ -9,10 +9,21 @@
 # output; `depends_on` on the data source forces that ordering (a data source normally
 # reads during plan, but this one's content only exists after the build step runs — a
 # known, standard-enough Terraform idiom for this exact case).
+# The files under src/ that ship, i.e. what build_package.sh copies: everything except
+# bytecode caches and pip's *.egg-info metadata. Those are local artefacts, rewritten by a
+# test run or `pip install -e .`, and hashing them made `terraform plan` report a rebuild
+# with no code change. Keep this filter in sync with the tar excludes in build_package.sh.
+locals {
+  lambda_src_files = [
+    for f in fileset("${path.module}/../src", "**") : f
+    if !strcontains(f, "__pycache__/") && !endswith(f, ".pyc") && !strcontains(f, ".egg-info/")
+  ]
+}
+
 resource "null_resource" "build_lambda_package" {
   triggers = {
     requirements_hash = filesha256("${path.module}/requirements-lambda.txt")
-    src_hash          = sha256(join("", [for f in fileset("${path.module}/../src", "**") : filesha256("${path.module}/../src/${f}")]))
+    src_hash          = sha256(join("", [for f in local.lambda_src_files : filesha256("${path.module}/../src/${f}")]))
   }
 
   provisioner "local-exec" {
