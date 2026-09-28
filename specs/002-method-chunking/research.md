@@ -106,10 +106,15 @@ cannot be settled by reading documentation.
 - **Rationale**: the feasibility test measured a 9.4× wall-clock gain. It also removes the
   1 s pacing sleep per file.
 - **Quota accounting**: it is unknown whether a batch counts as 1 request or N against the
-  daily quota. *Verify during implementation*: record the AI Studio usage counter for
-  `gemini-embedding-001` before and after the first real v2 build, and write the result
-  here. The design is sized for the worst case (N): about 60 inputs per build, plus K per
-  review (one per changed file).
+  daily quota (1,000 RPD, R15). *Verify during implementation (T035)*: AI Studio's rate-limit
+  page shows the **peak over 28 days**, not the day's total, so it cannot answer this.
+  Compare the **daily chart** of `gemini-embedding-001` requests for the day of the first
+  real v2 build against the days around it. A jump of ~1 per build means per call, a jump of
+  ~41 means per input. Write the result here. The design is sized for the worst case (N):
+  41 inputs per build today, plus K per review (one per changed file).
+- **Batches are limited by count only, not by tokens.** The 30,000 TPM limit (R15) is the
+  constraint that binds first: today's whole index is ~5,100 estimated tokens in one call,
+  but a batch of 100 chunks at the 1,800-token split threshold would be ~180,000. See T041.
 - **Alternatives**: keep `embedContent` with parallel calls (hits the RPM limit, and no
   quota benefit).
 
@@ -320,3 +325,44 @@ cannot be settled by reading documentation.
   the "after" measurement both run with the order as configured today. baseline.md's rule
   (an "after" run answered by a different model than its PR's baseline runs is
   re-triggered) keeps the comparison on the same model even if Gemini recovers in between.
+- **Gemini is not a reliable fallback at 20 requests per day (R15).** In the high tier it is
+  the *lead* entry, so every high-tier review spends one of the 20 daily requests before
+  reaching Cerebras, whether Gemini answers 503 or 429. In the low and medium tiers it is the
+  *last* entry, the one meant to catch a Groq-and-Cerebras outage, and it may have no
+  requests left for the day exactly when it is needed. The re-evaluation after T038 has to
+  treat Gemini as best-effort rather than as a guaranteed step in any tier, and should
+  consider whether it belongs in the lead position at all. Until then the order stays as
+  it is (see the decision above). For the "after" measurement: when Gemini's daily quota is
+  used up, it answers 429 instead of 503, and the review still falls through to Cerebras,
+  the same model as the baseline runs.
+
+## R15. Official free-tier limits (AI Studio, project `codereview`)
+
+Read from the AI Studio rate-limit page of the `codereview` project on 2026-09-28. These
+replace the estimates used earlier in this file and in research 001 for Google's models.
+
+| Model | RPM | TPM | RPD | Observed |
+|---|---:|---:|---:|---|
+| `gemini-embedding-001` | 100 | 30,000 | 1,000 | 28-day peak **33.55K TPM**, above the limit |
+| Gemini 3.5 Flash (`gemini-3.5-flash`) | 5 | 250,000 | **20** | **21 of 20** requests used on 2026-09-28 |
+
+- **The page shows 28-day peaks, not daily totals.** Any before/after comparison of usage
+  (T035) must use the per-day chart, not these peak figures.
+- **Embedding TPM is the binding limit for the index build.** The 33.55K peak shows the
+  30,000 TPM limit has already been exceeded, at least momentarily. The build's retry on
+  429 (R5) absorbs a short overshoot, but it is not a plan for a larger codebase, where
+  one batch alone can exceed 30,000 tokens (R4). Hence **T041**: cap each batch by
+  estimated tokens, not only by count, and wait between batches when the minute's budget
+  is spent.
+- **The review-time query side is far below the limits**: one batch call per review, one
+  input per changed file. PR #8's 11 files are about 8,000 embedding tokens (baseline.md §2).
+- **Gemini 3.5 Flash's 20 RPD is the scarcest resource in the pipeline**, and the high
+  tier leads with it; consequences in R14. The 21/20 on 2026-09-28 came from that day's
+  high-tier reviews (every PR #3 and #8 run tries Gemini first), possibly plus the
+  measurement script's `countTokens` calls on `gemini-3.5-flash`. Whether `countTokens`
+  counts against RPD is not known, which is another reason to keep keyed measurement runs
+  to one per PR (baseline.md, step 4).
+- The research-001 budget ceiling for Gemini (100,000 estimated prompt tokens, R9) stays
+  under its 250,000 TPM, so the budget table needs no change for Gemini's TPM. RPD, not
+  TPM, is what limits Gemini.
+

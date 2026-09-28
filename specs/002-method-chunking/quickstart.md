@@ -46,10 +46,12 @@ Then re-trigger PR #7 (empty commit, as in baseline.md step 2) and run
 
 ## 5. First v2 build (after merging the app PR to develop)
 
-- Before the merge, note the `gemini-embedding-001` request counter in AI Studio.
+- Before the merge, note the day's value in AI Studio's **daily chart** of
+  `gemini-embedding-001` requests (not the rate-limit page, which shows 28-day peaks).
 - The merge triggers `index-codebase`. In its log, expect `version 2`, the counts from
   step 3, 1 embedding call (for ~60 chunks) and 0 retries.
-- Note the counter again. Record in research R4 whether it grew by 1 or by N.
+- Check the daily chart again. Record in research R4 whether the build added ~1 request
+  or ~41 (one per input).
 - Check the published object:
   ```sh
   aws s3 cp s3://codereview-artifacts/index/develop/index.json - | python -c "import json,sys; i=json.load(sys.stdin); print(i['version'], i['commit'], len(i['chunks']))"
