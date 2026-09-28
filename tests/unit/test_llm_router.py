@@ -472,16 +472,18 @@ def test_mix_of_gone_and_transient_is_retryable(two_provider_tier):
         _review(_router({"gemini": gemini, "groq": groq}))
 
 
-def test_three_provider_fallback_reaches_cerebras_then_groq(monkeypatch):
+REAL_HIGH_TIER = (
+    "cerebras:gpt-oss-120b:medium,groq:openai/gpt-oss-120b:medium,gemini:gemini-3.5-flash:high"
+)
+
+
+def test_three_provider_fallback_reaches_groq_then_gemini(monkeypatch):
     """LLM_MODELS_HIGH's real shape has three entries, not two — confirms the router falls
     through all three, in order, rather than something baked-in assuming exactly two."""
-    monkeypatch.setenv(
-        "LLM_MODELS_HIGH",
-        "gemini:gemini-3.5-flash:high,cerebras:gpt-oss-120b:medium,groq:openai/gpt-oss-120b:medium",
-    )
-    gemini = FakeClient({"gemini-3.5-flash": LlmTransientError("HTTP 503")})
+    monkeypatch.setenv("LLM_MODELS_HIGH", REAL_HIGH_TIER)
     cerebras = FakeClient({"gpt-oss-120b": LlmTransientError("HTTP 429")})
-    groq = FakeClient({"openai/gpt-oss-120b": REVIEW_JSON})
+    groq = FakeClient({"openai/gpt-oss-120b": LlmTransientError("HTTP 413")})
+    gemini = FakeClient({"gemini-3.5-flash": REVIEW_JSON})
 
     router = _router(
         {"gemini": gemini, "cerebras": cerebras, "groq": groq},
@@ -489,9 +491,10 @@ def test_three_provider_fallback_reaches_cerebras_then_groq(monkeypatch):
     )
     review = router.generate_review(pr_id="42", diff_text="+x", complexity=Complexity.HIGH)
 
-    assert review.model_used == "groq:openai/gpt-oss-120b:medium"
+    assert review.model_used == "gemini:gemini-3.5-flash:high"
     assert review.fell_back is True
     assert cerebras.calls == [("gpt-oss-120b", "medium")]
+    assert groq.calls == [("openai/gpt-oss-120b", "medium")]
 
 
 def test_deadline_stops_before_an_attempt_that_would_not_fit(two_provider_tier):
@@ -819,9 +822,9 @@ def test_gemini_low_reasoning_still_uses_the_default_read_timeout():
 def test_deadline_check_uses_the_larger_budget_for_a_gemini_high_attempt(monkeypatch):
     """Enough time for a normal (50s) attempt but not for Gemini's high-reasoning (95s)
     attempt must still stop before starting it — the per-spec budget, not the flat default,
-    is what the router checks. Deliberately lists Groq first here (unlike the real
-    LLM_MODELS_HIGH, which leads with Gemini — see the next test) so the budget check is
-    exercised on the *second* attempt, proving it's keyed to the spec, not its position."""
+    is what the router checks. Lists Gemini after Groq, as the real LLM_MODELS_HIGH does
+    after both gpt-oss entries, so the budget check is exercised on a *later* attempt,
+    proving it's keyed to the spec, not its position."""
     monkeypatch.setenv(
         "LLM_MODELS_HIGH", "groq:openai/gpt-oss-120b:medium,gemini:gemini-3.5-flash:high"
     )
@@ -854,39 +857,52 @@ def test_enough_time_for_gemini_high_budget_lets_the_attempt_run(monkeypatch):
     assert review.fell_back is True
 
 
-def test_real_high_tier_order_leads_with_gemini_high_not_as_a_rare_fallback(monkeypatch):
-    """LLM_MODELS_HIGH leads with gemini:gemini-3.5-flash:high — the reverse of low/medium,
-    which both lead with Groq — with Cerebras and Groq as later fallbacks (see
-    test_three_provider_fallback_reaches_cerebras_then_groq for the full three-entry list).
-    Isolated here to a two-entry env var so this test focuses purely on Gemini-leads-not-
-    falls-back, without the Cerebras hop's own assertions in the way. With plenty of time,
-    Gemini's high-reasoning pass runs on the very first attempt (not reached only when Groq
-    happens to fail); with too little time for even that first attempt's 95s budget, the
-    router stops before trying anything at all."""
-    monkeypatch.setenv(
-        "LLM_MODELS_HIGH", "gemini:gemini-3.5-flash:high,groq:openai/gpt-oss-120b:medium"
-    )
-    gemini = FakeClient({"gemini-3.5-flash": REVIEW_JSON})
+def test_real_high_tier_order_answers_with_cerebras_and_never_calls_gemini(monkeypatch):
+    """LLM_MODELS_HIGH leads with Cerebras at medium. Gemini :high returned 503 on 12 of 12
+    measured high-tier runs and allows only 20 requests per day, so it is the last resort,
+    not the lead (research.md, "High tier: Cerebras first, Gemini last"). When Cerebras
+    answers, neither Groq nor Gemini is called, so no Gemini daily quota is spent."""
+    monkeypatch.setenv("LLM_MODELS_HIGH", REAL_HIGH_TIER)
+    cerebras = FakeClient({"gpt-oss-120b": REVIEW_JSON})
     groq = FakeClient({"openai/gpt-oss-120b": REVIEW_JSON})
+    gemini = FakeClient({"gemini-3.5-flash": REVIEW_JSON})
 
-    plenty_of_time = _router(
-        {"gemini": gemini, "groq": groq},
-        remaining_time_ms=lambda: GEMINI_HIGH_REASONING_ATTEMPT_BUDGET_MS,
-    )
-    review = plenty_of_time.generate_review(pr_id="42", diff_text="+x", complexity=Complexity.HIGH)
-    assert review.model_used == "gemini:gemini-3.5-flash:high"
+    router = _router({"cerebras": cerebras, "groq": groq, "gemini": gemini})
+    review = router.generate_review(pr_id="42", diff_text="+x", complexity=Complexity.HIGH)
+
+    assert review.model_used == "cerebras:gpt-oss-120b:medium"
     assert review.fell_back is False
-    assert groq.calls == []
+    assert groq.calls == [] and gemini.calls == []
 
-    too_little_time = _router(
-        {"gemini": gemini, "groq": groq},
-        remaining_time_ms=lambda: GEMINI_HIGH_REASONING_ATTEMPT_BUDGET_MS - 1,
+
+def test_gemini_high_still_fits_after_two_slow_failures_within_the_lambda_timeout(monkeypatch):
+    """The timeout arithmetic in infra/iam_invoke_llm.tf: with a 230 s Lambda, Cerebras and Groq
+    each failing at their full 50 s budget (plus ~10 s of cold start and secret fetch) still
+    leaves ~120 s, more than Gemini :high's 95 s budget, so the last resort does run."""
+    monkeypatch.setenv("LLM_MODELS_HIGH", REAL_HIGH_TIER)
+    cerebras = FakeClient({"gpt-oss-120b": LlmTransientError("read timed out")})
+    groq = FakeClient({"openai/gpt-oss-120b": LlmTransientError("read timed out")})
+    gemini = FakeClient({"gemini-3.5-flash": REVIEW_JSON})
+    lambda_timeout_ms, overhead_ms = 230_000, 10_000
+    remaining = iter(
+        [
+            lambda_timeout_ms - overhead_ms,
+            lambda_timeout_ms - overhead_ms - ATTEMPT_TIME_BUDGET_MS,
+            lambda_timeout_ms - overhead_ms - 2 * ATTEMPT_TIME_BUDGET_MS,
+        ]
     )
-    with pytest.raises(LlmTransientError) as exc_info:
-        too_little_time.generate_review(pr_id="42", diff_text="+x", complexity=Complexity.HIGH)
-    assert "Stopped before gemini:gemini-3.5-flash:high" in str(exc_info.value)
-    assert gemini.calls == [("gemini-3.5-flash", "high")]  # from the first call above only
-    assert groq.calls == []
+
+    router = _router(
+        {"cerebras": cerebras, "groq": groq, "gemini": gemini},
+        remaining_time_ms=lambda: next(remaining),
+    )
+    review = router.generate_review(pr_id="42", diff_text="+x", complexity=Complexity.HIGH)
+
+    assert lambda_timeout_ms - overhead_ms - 2 * ATTEMPT_TIME_BUDGET_MS >= (
+        GEMINI_HIGH_REASONING_ATTEMPT_BUDGET_MS
+    )
+    assert review.model_used == "gemini:gemini-3.5-flash:high"
+    assert gemini.calls == [("gemini-3.5-flash", "high")]
 
 
 def test_paths_are_threaded_from_generate_review_into_the_prompt(monkeypatch):
