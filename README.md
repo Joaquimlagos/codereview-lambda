@@ -320,17 +320,6 @@ groups.
   targeting another branch is still reviewed against develop's snapshot of the codebase, and
   a PR opened before develop was ever indexed is reviewed with no project context at all
   (`indexAvailable: false` — a deliberate graceful degradation, not a failure).
-<<<<<<< HEAD
-- **Retrieval is whole-file, top-3, single-pass.** Each index entry is one whole file, ranked
-  by cosine similarity against the embedded diff; there is no sub-file chunking, no reranking
-  step, and no token budgeting beyond the fixed `TOP_K = 3`. A large retrieved file consumes
-  prompt budget in full. **Planned next step**: sub-file chunking, so a large file's retrieval
-  cost scales with the relevant section instead of the whole file.
-- **Gemini's `high`-reasoning attempt can still exceed its own 90 s timeout on a very large
-  diff.** Cerebras (see [Model selection](#model-selection)) gives the high tier a working
-  fallback when that happens, but doesn't eliminate the risk on Gemini's own lead attempt —
-  no dynamic timeout scaled to diff size exists yet.
-=======
 - **Retrieval granularity depends on the published index.** With a version 1 index (one
   entry per whole file), retrieval is whole-file, top-3, single-pass, exactly as before; a
   large retrieved file consumes prompt budget in full. With a version 2 index
@@ -338,4 +327,7 @@ groups.
   own query, entries are methods with a context header, code the diff already changes is left
   out, and the top 8 are packed into each provider's prompt budget. There is still no
   reranking step in either version.
->>>>>>> origin/develop
+- **Gemini's `high`-reasoning attempt can still exceed its own 90 s timeout on a very large
+  diff.** Cerebras (see [Model selection](#model-selection)) gives the high tier a working
+  fallback when that happens, but doesn't eliminate the risk on Gemini's own lead attempt —
+  no dynamic timeout scaled to diff size exists yet.
