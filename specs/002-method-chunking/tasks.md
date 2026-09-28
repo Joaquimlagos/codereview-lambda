@@ -112,7 +112,7 @@ built on per-file queries.
 - [x] T032 [US2] app: `python scripts/build_index.py --dry-run` on `develop`'s tree; write the counts by kind into lambda `research.md` R1 as FR-003's reference
 - [x] T033 [US2] app: `CLAUDE.md`: index contract → v2 (link to lambda's contracts/index-v2.md), "one chunk per file" → method chunking, the stdlib-only paragraph → the approved pinned exception, the concurrency group; `README.md`, if it describes the index
 - [ ] T034 🔒 app: push `feat/method-chunking`, open a PR → **`develop`** (its own review still runs on the v1 index, as expected)
-- [ ] T035 🔒 app: before merging, record the AI Studio `gemini-embedding-001` usage counter; merge; confirm `index-codebase` logs 1 call and 0 retries; confirm the S3 object is `version 2`; record the counter again → research R4 (1 or N per batch) (user-assisted: AI Studio is a UI)
+- [ ] T035 🔒 app: before merging, note the day's value in the **daily chart** of `gemini-embedding-001` requests in AI Studio (the rate-limit page shows 28-day peaks, research R15, so it cannot be used); merge; confirm `index-codebase` logs 1 call and 0 retries; confirm the S3 object is `version 2`; record the counter again → research R4 (1 or N per batch) (user-assisted: AI Studio is a UI)
 
 **Checkpoint**: v2 is live; rollback = restore the previous S3 object version (contracts/index-v2.md).
 
@@ -130,6 +130,12 @@ built on per-file queries.
 
 - [ ] T039 [P] lambda: finalise research.md (R1 counts, R4 quota answer, R9 Groq answer, Gemini TPM ceiling) and tick checklists/requirements.md
 - [ ] T040 [P] lambda: README "Results" section: before/after table linked to baseline.md and after.md
+
+---
+
+## Follow-ups (not required for this feature)
+
+- [ ] T041 app: **token-bounded embedding batches** in `scripts/build_index.py` (research R4, R15). Besides the 100-input cap, cap each `batchEmbedContents` call at an estimated token total safely under the 30,000 TPM limit (e.g. 25,000), and when the next batch would exceed what is left of the current minute's budget, wait for the window to roll over instead of relying on 429 retries. Add a stub-server test with oversized chunks that asserts the per-call token cap and the wait. Not needed at today's size (41 chunks, ~5,100 estimated tokens, one call); needed before the indexed code grows toward ~30,000 estimated tokens
 
 ---
 
