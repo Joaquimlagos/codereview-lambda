@@ -100,10 +100,10 @@ resource "aws_lambda_function" "invoke_llm" {
   handler       = "invoke_llm.handler.handler"
   runtime       = "python3.14"
   # 180s: most attempts allow 5s to connect + 45s to read (50s budget), but the high tier's
-  # Gemini entry (gemini:gemini-3.5-flash:high, the fallback — see LLM_MODELS_HIGH) needs far
+  # Gemini entry (gemini:gemini-3.5-flash:high, tried first — see LLM_MODELS_HIGH) needs far
   # more — measured 63s on a realistic prompt, with real run-to-run variance — so it gets its
   # own 5s + 90s budget (95s; llm_router.py's GEMINI_HIGH_REASONING_*). Worst case for
-  # LLM_MODELS_HIGH is Groq's medium attempt (50s) then Gemini's high fallback (95s) = 145s,
+  # LLM_MODELS_HIGH is Gemini's high attempt (95s) then Groq's medium fallback (50s) = 145s,
   # plus cold start and the secret fetch; 180s leaves real margin instead of the ~0s the
   # previous 150s left for exactly that path. The router still checks the remaining time
   # before every attempt (against that attempt's own budget) and stops with LlmTransientError
@@ -133,7 +133,7 @@ resource "aws_lambda_function" "invoke_llm" {
       GROQ_API_KEY_SECRET_ARN   = data.aws_ssm_parameter.groq_api_key_arn.value
       LLM_MODELS_LOW            = "groq:openai/gpt-oss-120b:low,gemini:gemini-3.5-flash:low"
       LLM_MODELS_MEDIUM         = "groq:openai/gpt-oss-120b:medium,gemini:gemini-3.5-flash:low"
-      LLM_MODELS_HIGH           = "groq:openai/gpt-oss-120b:medium,gemini:gemini-3.5-flash:high"
+      LLM_MODELS_HIGH           = "gemini:gemini-3.5-flash:high,groq:openai/gpt-oss-120b:medium"
     }
   }
 
