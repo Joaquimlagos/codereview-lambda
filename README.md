@@ -124,17 +124,18 @@ Free-tier availability varies a lot between models; see
 `specs/001-pr-review-pipeline/research.md`'s "Multi-provider model fallback" decision for the
 measurements behind the current lists.
 
-**The high tier gets a genuinely different configuration, not just the same one twice — and
-runs it first, not as a rarely-reached fallback.** `LLM_MODELS_HIGH` leads with Gemini at
-`thinkingLevel: "high"`, then falls back to Groq at `medium`. Leading with Groq (as low and
-medium do) would leave the deeper Gemini pass almost never reached in practice, since Groq's
-`medium` attempt succeeds most of the time — making the high tier behave like medium's
-config despite being configured differently. Gemini `high` measured 6 inline comments vs. 2
-at `low` on the same real prompt; Groq `medium` is the fallback, not the lead, because `high`
-effort on Groq reliably exhausts its output budget on reasoning alone and returns nothing
-(tested directly). The `high` Gemini call is also much slower (measured up to 63 s vs. 9–31 s
-at `low`), so it gets its own longer timeout and the Lambda's overall timeout is 180 s rather
-than 150 s. See research.md's "High-tier reasoning: why Gemini, not Groq".
+**The high tier gets a genuinely different configuration, not just the same one twice.**
+`LLM_MODELS_HIGH` leads with Groq at `medium` (as low and medium do), then falls back to
+Gemini at `thinkingLevel: "high"`. Gemini `high` measured 6 inline comments vs. 2 at `low` on
+the same real prompt, a real difference in review depth; `high` effort on Groq itself reliably
+exhausts its output budget on reasoning alone and returns nothing (tested directly), and even
+Groq `medium` — the free tier's only viable Groq setting — has since been observed to fail
+the same way non-deterministically (see research.md's "Multi-provider model fallback"), so
+Gemini `high` is kept as the fallback that still delivers a deep review whenever Groq's first
+attempt doesn't answer, without spending Gemini's slower, costlier call on every review. The
+`high` Gemini call is also much slower (measured up to 63 s vs. 9–31 s at `low`), so it gets
+its own longer timeout and the Lambda's overall timeout is 180 s rather than 150 s. See
+research.md's "High-tier reasoning: why Gemini, not Groq" and its superseding note.
 
 ## Review quality
 

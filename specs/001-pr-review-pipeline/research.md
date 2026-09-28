@@ -592,6 +592,11 @@ in `LLM_MODELS_*`, and Gemma is out. Kept for the measurements and reasoning tha
 
 ## High-tier reasoning: why Gemini, not Groq
 
+*Superseded by "High-tier order reverted: Groq leads again" below — the order this section
+argued for was flipped back once Groq `:medium`'s own reliability assumption stopped holding.
+Kept for the Groq-`:high` and Gemini-`:high` measurements, which are still the basis for
+keeping Gemini `:high` in the list at all.*
+
 - **Decision**: `LLM_MODELS_HIGH` is `gemini:gemini-3.5-flash:high,groq:openai/gpt-oss-120b:medium`
   — Gemini `:high` **leads**, Groq `:medium` is the **fallback**, the reverse of low/medium's
   order (both lead with Groq). Gemini's client-level read timeout, and the router's
@@ -656,6 +661,44 @@ in `LLM_MODELS_*`, and Gemma is out. Kept for the measurements and reasoning tha
   here); a flat, larger read timeout for every entry regardless of reasoning level (rejected —
   needlessly extends the budget check for the low/medium tiers and every other high-tier
   entry, none of which need anywhere near 90 s in practice).
+
+## High-tier order reverted: Groq leads again
+
+- **Decision**: `LLM_MODELS_HIGH` is now `groq:openai/gpt-oss-120b:medium,gemini:gemini-3.5-flash:high`
+  — back to Groq `:medium` **leading**, Gemini `:high` as the **fallback**, matching low/medium's
+  order. The Gemini-high-specific overrides (`GEMINI_HIGH_REASONING_READ_TIMEOUT_SECONDS = 90`,
+  `GEMINI_HIGH_REASONING_ATTEMPT_BUDGET_MS`) and the 180 s Lambda timeout are unchanged — they're
+  keyed to the entry's own `reasoning` spec, not its position in the list, so which slot Gemini
+  `:high` occupies doesn't affect them, and the worst-case total (one 50 s budget plus one 95 s
+  budget, whichever order) is the same 145 s either way.
+- **Why the previous reasoning stopped holding**: "High-tier reasoning: why Gemini, not Groq"
+  led with Gemini specifically because Groq `:medium` "succeeds on the first attempt most of the
+  time (confirmed across PR #3, #5, #7 — `fell_back: false` every time)", so leading with Groq
+  would have left the deeper Gemini pass "reached only on the rare attempt where Groq itself
+  failed." That assumption no longer holds: PR #13 showed Groq `:medium` can also fail with
+  empty content (`finish_reason: "length"`, reasoning alone exhausting the 5,500-token cap) —
+  see "Multi-provider model fallback"'s note on this — non-deterministically, on a prompt far
+  smaller than the one PR #3/#5/#7 were measured against. Groq's own first-attempt reliability
+  was the entire justification for spending every high-tier review on the slower, 63 s Gemini
+  `:high` call regardless; with that reliability now known to be imperfect, defaulting every
+  review to the slow path bought certainty the data no longer supports, at a latency cost paid
+  on every single high-tier review instead of only the ones where Groq actually fails.
+- **What this trades away, honestly**: Gemini `:high`'s deeper pass (6 comments vs. 2 at `low`
+  on the same prompt, per the still-valid measurement above) is now reached only when Groq's
+  first attempt fails for any reason — 503, the empty-content failure, or a 413 — same as
+  low/medium's pattern. A high-tier review where Groq's first attempt succeeds gets Groq
+  `:medium`'s depth, not Gemini `:high`'s; this is the exact trade-off the previous decision
+  was written to avoid, now accepted because the alternative (always paying Gemini `:high`'s
+  latency) no longer rests on a first-attempt-reliability guarantee that has since been observed
+  to fail.
+- **Alternatives considered**: Keeping Gemini `:high` first regardless (rejected — pays the
+  63 s cost on every high-tier review to guard against a Groq failure mode that, per the
+  updated measurements, is real but not the norm); dropping Gemini `:high` from the list
+  entirely and accepting Groq `:medium`'s depth as the high tier's ceiling (rejected — still
+  loses the measured 6-vs-2-comment depth difference on the reviews where Groq does fail, for
+  no benefit); a confidence-based order that picks Groq or Gemini first per PR based on some
+  predicted failure likelihood (rejected — no signal exists to predict this per-PR, and Jev's
+  routing decision already happens upstream of this list).
 
 ## Complexity criteria: an explicit size clause
 
