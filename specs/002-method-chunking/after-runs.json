@@ -1,0 +1,1821 @@
+[
+  {
+    "execution": "9b9d0dc0-7860-67e6-2e20-a01d610fe39c_85748d8b-4ae1-9a7b-a8c3-81640782488b",
+    "started": "2026-09-28T17:27:03.848000-03:00",
+    "status": "SUCCEEDED",
+    "prNumber": 3,
+    "sha": "11c7dcc973c2958a781ec09b7d77d1edb3374861",
+    "diffKey": "prs/3/11c7dcc973c2958a781ec09b7d77d1edb3374861.diff",
+    "complexity": "high",
+    "tokens": {
+      "instructions": {
+        "o200k": 688,
+        "gemini": null
+      },
+      "diff": {
+        "o200k": 1676,
+        "gemini": null
+      },
+      "context": {
+        "o200k": 631,
+        "gemini": null
+      },
+      "total": {
+        "o200k": 2994,
+        "gemini": null
+      }
+    },
+    "provider_prompt_tokens": 3061,
+    "diff_embedding_tokens": null,
+    "diff_truncated_for_embedding": null,
+    "diff_o200k_tokens": 1676,
+    "index": {
+      "version": 2,
+      "commit": "5a0eb9b8741bab26cbc79e621ff6eea060eabfde",
+      "generatedAt": "2026-09-28T20:03:43Z",
+      "s3VersionId": "8oFWxwzN9wuEFdBcxzpBXFCqTl7c8fYt",
+      "chunks": 41
+    },
+    "rag_v2": {
+      "queries": 5,
+      "largest_query_estimated_tokens": 973,
+      "logged_query": {
+        "event": "rag_query",
+        "pr": 3,
+        "index_version": 2,
+        "index_commit": "5a0eb9b8741bab26cbc79e621ff6eea060eabfde",
+        "queries": 5,
+        "query_parts_split": 0,
+        "excluded_overlapping": 6,
+        "candidates": 35,
+        "selected": 8,
+        "scores": {
+          "min": 0.6246,
+          "max": 0.8277,
+          "mean_selected": 0.7894,
+          "min_selected": 0.7691,
+          "mean_rest": 0.664,
+          "max_rest": 0.7685,
+          "margin_at_cut": 0.0006,
+          "standardised_gap": 2.12
+        }
+      },
+      "logged_chunks": [
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 1,
+          "id": "src/main/java/com/codereview/app/auth/JwtValidator.java#JwtValidator.extractUsername(String):40-42",
+          "score": 0.8277,
+          "matched_query": "src/main/java/com/codereview/app/auth/JwtValidator.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 2,
+          "id": "src/main/java/com/codereview/app/auth/JwtValidator.java#JwtValidator.JwtValidator(String,long):23-28",
+          "score": 0.804,
+          "matched_query": "src/main/java/com/codereview/app/auth/JwtValidator.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 3,
+          "id": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java#JwtValidatorTest.generatedTokenIsValid():17-22",
+          "score": 0.7989,
+          "matched_query": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 4,
+          "id": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java#JwtValidatorTest.setUp():12-15",
+          "score": 0.7855,
+          "matched_query": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 5,
+          "id": "src/test/java/com/codereview/app/auth/AuthControllerTest.java#AuthControllerTest.loginWithValidCredentialsReturnsToken():27-36",
+          "score": 0.7784,
+          "matched_query": "src/main/java/com/codereview/app/auth/AuthController.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 6,
+          "id": "src/main/java/com/codereview/app/auth/JwtValidator.java#JwtValidator.generateToken(String):30-38",
+          "score": 0.7764,
+          "matched_query": "src/main/java/com/codereview/app/auth/JwtValidator.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 7,
+          "id": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java#JwtValidatorTest.extractUsernameReturnsSubject():24-29",
+          "score": 0.7753,
+          "matched_query": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 8,
+          "id": "src/main/java/com/codereview/app/auth/LoginRequest.java#LoginRequest:3-4",
+          "score": 0.7691,
+          "matched_query": "src/main/java/com/codereview/app/auth/LoginResponse.java"
+        }
+      ],
+      "scores_from_logs": {
+        "min": 0.6246,
+        "max": 0.8277,
+        "mean_selected": 0.7894,
+        "min_selected": 0.7691,
+        "mean_rest": 0.664,
+        "max_rest": 0.7685,
+        "margin_at_cut": 0.0006,
+        "standardised_gap": 2.12
+      },
+      "scores_recomputed": null,
+      "max_logged_vs_recomputed_score_diff": null
+    },
+    "llm_attempts": [
+      {
+        "event": "llm_attempt",
+        "pr": 3,
+        "model": "gemini:gemini-3.5-flash:high",
+        "budget": 100000,
+        "estimated_prompt": 4415,
+        "context_chunks_kept": 8,
+        "context_chunks_dropped": 0,
+        "skipped": false
+      },
+      {
+        "event": "llm_attempt",
+        "pr": 3,
+        "model": "cerebras:gpt-oss-120b:medium",
+        "budget": 18000,
+        "estimated_prompt": 4415,
+        "context_chunks_kept": 8,
+        "context_chunks_dropped": 0,
+        "skipped": false
+      }
+    ],
+    "packed": {
+      "budget": 18000,
+      "estimated_prompt": 4415,
+      "chunks_kept": 8,
+      "chunks_dropped": 0
+    },
+    "rag_returned": [
+      "src/main/java/com/codereview/app/auth/JwtValidator.java#JwtValidator.extractUsername(String):40-42",
+      "src/main/java/com/codereview/app/auth/JwtValidator.java#JwtValidator.JwtValidator(String,long):23-28",
+      "src/test/java/com/codereview/app/auth/JwtValidatorTest.java#JwtValidatorTest.generatedTokenIsValid():17-22",
+      "src/test/java/com/codereview/app/auth/JwtValidatorTest.java#JwtValidatorTest.setUp():12-15",
+      "src/test/java/com/codereview/app/auth/AuthControllerTest.java#AuthControllerTest.loginWithValidCredentialsReturnsToken():27-36",
+      "src/main/java/com/codereview/app/auth/JwtValidator.java#JwtValidator.generateToken(String):30-38",
+      "src/test/java/com/codereview/app/auth/JwtValidatorTest.java#JwtValidatorTest.extractUsernameReturnsSubject():24-29",
+      "src/main/java/com/codereview/app/auth/LoginRequest.java#LoginRequest:3-4"
+    ],
+    "rag_reproduced": null,
+    "rag_ranking": null,
+    "model_used": "cerebras:gpt-oss-120b:medium",
+    "fell_back": true,
+    "parse_fallback": false,
+    "log_lines": [
+      "[WARNING]\t2026-09-28T20:27:24.199Z\tca720d66-cd28-4d55-958b-8f5da696ab54\tModel gemini:gemini-3.5-flash:high failed for PR 3 (gemini:gemini-3.5-flash returned HTTP 503: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n); trying next model\n",
+      "[INFO]\t2026-09-28T20:27:26.508Z\tca720d66-cd28-4d55-958b-8f5da696ab54\tcerebras:gpt-oss-120b answered: finish_reason=stop usage={'total_tokens': 6777, 'completion_tokens': 3716, 'completion_tokens_details': {'accepted_prediction_tokens': 0, 'rejected_prediction_tokens': 0, 'reasoning_tokens': 3444}, 'prompt_tokens': 3061, 'prompt_tokens_details': {'cached_tokens': 0}}\n"
+    ],
+    "summary": "Added logging and existence checks for login, but introduced credential exposure, user‑enumeration, and weakened JWT validation by accepting expired or unverifiable tokens.",
+    "comments": [
+      {
+        "path": "src/main/java/com/codereview/app/auth/AuthController.java",
+        "line": 28,
+        "body": "Logging the password in clear text exposes sensitive credentials in application logs, creating a security risk if logs are accessed by unauthorized parties.",
+        "category": "security",
+        "severity": "high"
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/AuthController.java",
+        "line": 30,
+        "body": "Returning distinct error messages for \"User not found\" versus \"Incorrect password\" enables username enumeration, allowing attackers to discover valid accounts.",
+        "category": "security",
+        "severity": "medium"
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/JwtValidator.java",
+        "line": 53,
+        "body": "Catching ExpiredJwtException and still returning true accepts expired tokens, bypassing token expiry checks and permitting replay attacks.",
+        "category": "security",
+        "severity": "high"
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/JwtValidator.java",
+        "line": 57,
+        "body": "Accepting any JwtException or IllegalArgumentException as valid causes all malformed or tampered tokens to be accepted, effectively disabling JWT authentication.",
+        "category": "security",
+        "severity": "high"
+      }
+    ]
+  },
+  {
+    "execution": "10288a1c-7828-99f8-2b71-2dd1bbdd3f28_5d9939c9-9abd-16e3-62f7-ba30f8498265",
+    "started": "2026-09-28T17:32:33.390000-03:00",
+    "status": "SUCCEEDED",
+    "prNumber": 3,
+    "sha": "154088c07a797a7d0c15d9fdd8e09fb6f9e41afc",
+    "diffKey": "prs/3/154088c07a797a7d0c15d9fdd8e09fb6f9e41afc.diff",
+    "complexity": "high",
+    "tokens": {
+      "instructions": {
+        "o200k": 688,
+        "gemini": null
+      },
+      "diff": {
+        "o200k": 1676,
+        "gemini": null
+      },
+      "context": {
+        "o200k": 631,
+        "gemini": null
+      },
+      "total": {
+        "o200k": 2994,
+        "gemini": null
+      }
+    },
+    "provider_prompt_tokens": 3061,
+    "diff_embedding_tokens": null,
+    "diff_truncated_for_embedding": null,
+    "diff_o200k_tokens": 1676,
+    "index": {
+      "version": 2,
+      "commit": "5a0eb9b8741bab26cbc79e621ff6eea060eabfde",
+      "generatedAt": "2026-09-28T20:03:43Z",
+      "s3VersionId": "8oFWxwzN9wuEFdBcxzpBXFCqTl7c8fYt",
+      "chunks": 41
+    },
+    "rag_v2": {
+      "queries": 5,
+      "largest_query_estimated_tokens": 973,
+      "logged_query": {
+        "event": "rag_query",
+        "pr": 3,
+        "index_version": 2,
+        "index_commit": "5a0eb9b8741bab26cbc79e621ff6eea060eabfde",
+        "queries": 5,
+        "query_parts_split": 0,
+        "excluded_overlapping": 6,
+        "candidates": 35,
+        "selected": 8,
+        "scores": {
+          "min": 0.6246,
+          "max": 0.8277,
+          "mean_selected": 0.7894,
+          "min_selected": 0.7691,
+          "mean_rest": 0.664,
+          "max_rest": 0.7685,
+          "margin_at_cut": 0.0006,
+          "standardised_gap": 2.12
+        }
+      },
+      "logged_chunks": [
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 1,
+          "id": "src/main/java/com/codereview/app/auth/JwtValidator.java#JwtValidator.extractUsername(String):40-42",
+          "score": 0.8277,
+          "matched_query": "src/main/java/com/codereview/app/auth/JwtValidator.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 2,
+          "id": "src/main/java/com/codereview/app/auth/JwtValidator.java#JwtValidator.JwtValidator(String,long):23-28",
+          "score": 0.804,
+          "matched_query": "src/main/java/com/codereview/app/auth/JwtValidator.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 3,
+          "id": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java#JwtValidatorTest.generatedTokenIsValid():17-22",
+          "score": 0.7989,
+          "matched_query": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 4,
+          "id": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java#JwtValidatorTest.setUp():12-15",
+          "score": 0.7855,
+          "matched_query": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 5,
+          "id": "src/test/java/com/codereview/app/auth/AuthControllerTest.java#AuthControllerTest.loginWithValidCredentialsReturnsToken():27-36",
+          "score": 0.7784,
+          "matched_query": "src/main/java/com/codereview/app/auth/AuthController.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 6,
+          "id": "src/main/java/com/codereview/app/auth/JwtValidator.java#JwtValidator.generateToken(String):30-38",
+          "score": 0.7764,
+          "matched_query": "src/main/java/com/codereview/app/auth/JwtValidator.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 7,
+          "id": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java#JwtValidatorTest.extractUsernameReturnsSubject():24-29",
+          "score": 0.7753,
+          "matched_query": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 8,
+          "id": "src/main/java/com/codereview/app/auth/LoginRequest.java#LoginRequest:3-4",
+          "score": 0.7691,
+          "matched_query": "src/main/java/com/codereview/app/auth/LoginResponse.java"
+        }
+      ],
+      "scores_from_logs": {
+        "min": 0.6246,
+        "max": 0.8277,
+        "mean_selected": 0.7894,
+        "min_selected": 0.7691,
+        "mean_rest": 0.664,
+        "max_rest": 0.7685,
+        "margin_at_cut": 0.0006,
+        "standardised_gap": 2.12
+      },
+      "scores_recomputed": null,
+      "max_logged_vs_recomputed_score_diff": null
+    },
+    "llm_attempts": [
+      {
+        "event": "llm_attempt",
+        "pr": 3,
+        "model": "gemini:gemini-3.5-flash:high",
+        "budget": 100000,
+        "estimated_prompt": 4415,
+        "context_chunks_kept": 8,
+        "context_chunks_dropped": 0,
+        "skipped": false
+      },
+      {
+        "event": "llm_attempt",
+        "pr": 3,
+        "model": "cerebras:gpt-oss-120b:medium",
+        "budget": 18000,
+        "estimated_prompt": 4415,
+        "context_chunks_kept": 8,
+        "context_chunks_dropped": 0,
+        "skipped": false
+      }
+    ],
+    "packed": {
+      "budget": 18000,
+      "estimated_prompt": 4415,
+      "chunks_kept": 8,
+      "chunks_dropped": 0
+    },
+    "rag_returned": [
+      "src/main/java/com/codereview/app/auth/JwtValidator.java#JwtValidator.extractUsername(String):40-42",
+      "src/main/java/com/codereview/app/auth/JwtValidator.java#JwtValidator.JwtValidator(String,long):23-28",
+      "src/test/java/com/codereview/app/auth/JwtValidatorTest.java#JwtValidatorTest.generatedTokenIsValid():17-22",
+      "src/test/java/com/codereview/app/auth/JwtValidatorTest.java#JwtValidatorTest.setUp():12-15",
+      "src/test/java/com/codereview/app/auth/AuthControllerTest.java#AuthControllerTest.loginWithValidCredentialsReturnsToken():27-36",
+      "src/main/java/com/codereview/app/auth/JwtValidator.java#JwtValidator.generateToken(String):30-38",
+      "src/test/java/com/codereview/app/auth/JwtValidatorTest.java#JwtValidatorTest.extractUsernameReturnsSubject():24-29",
+      "src/main/java/com/codereview/app/auth/LoginRequest.java#LoginRequest:3-4"
+    ],
+    "rag_reproduced": null,
+    "rag_ranking": null,
+    "model_used": "cerebras:gpt-oss-120b:medium",
+    "fell_back": true,
+    "parse_fallback": false,
+    "log_lines": [
+      "[WARNING]\t2026-09-28T20:32:49.052Z\t29503e96-74a6-4b51-b9eb-7ca764479ac6\tModel gemini:gemini-3.5-flash:high failed for PR 3 (gemini:gemini-3.5-flash returned HTTP 503: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n); trying next model\n",
+      "[INFO]\t2026-09-28T20:32:50.607Z\t29503e96-74a6-4b51-b9eb-7ca764479ac6\tcerebras:gpt-oss-120b answered: finish_reason=stop usage={'total_tokens': 5369, 'completion_tokens': 2308, 'completion_tokens_details': {'accepted_prediction_tokens': 0, 'rejected_prediction_tokens': 0, 'reasoning_tokens': 2086}, 'prompt_tokens': 3061, 'prompt_tokens_details': {'cached_tokens': 512}}\n"
+    ],
+    "summary": "Added logging and existence checks to the login endpoint and relaxed JWT validation logic. The changes introduce credential exposure in logs, enable user enumeration, and accept unverifiable tokens, creating security risks.",
+    "comments": [
+      {
+        "path": "src/main/java/com/codereview/app/auth/AuthController.java",
+        "line": 29,
+        "body": "Logging the password in clear text exposes sensitive credentials in application logs, which can be accessed by unauthorized users or retained longer than intended.",
+        "category": "security",
+        "severity": "high"
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/AuthController.java",
+        "line": 28,
+        "body": "Returning distinct error messages for \"User not found\" versus \"Incorrect password\" enables user enumeration, allowing an attacker to discover valid usernames.",
+        "category": "security",
+        "severity": "medium"
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/JwtValidator.java",
+        "line": 58,
+        "body": "Catching JwtException and returning true causes any malformed or tampered token to be accepted, effectively bypassing authentication verification.",
+        "category": "security",
+        "severity": "high"
+      }
+    ]
+  },
+  {
+    "execution": "0451a4ef-d35a-b849-6b17-904b79fe76c0_d7af3102-5544-daa8-79e0-c65cad03ee36",
+    "started": "2026-09-28T17:37:46.244000-03:00",
+    "status": "SUCCEEDED",
+    "prNumber": 3,
+    "sha": "fc98e4ed1501ad934ca6e12f7ad4e915ee3ca074",
+    "diffKey": "prs/3/fc98e4ed1501ad934ca6e12f7ad4e915ee3ca074.diff",
+    "complexity": "high",
+    "tokens": {
+      "instructions": {
+        "o200k": 688,
+        "gemini": null
+      },
+      "diff": {
+        "o200k": 1676,
+        "gemini": null
+      },
+      "context": {
+        "o200k": 631,
+        "gemini": null
+      },
+      "total": {
+        "o200k": 2994,
+        "gemini": null
+      }
+    },
+    "provider_prompt_tokens": 3061,
+    "diff_embedding_tokens": null,
+    "diff_truncated_for_embedding": null,
+    "diff_o200k_tokens": 1676,
+    "index": {
+      "version": 2,
+      "commit": "5a0eb9b8741bab26cbc79e621ff6eea060eabfde",
+      "generatedAt": "2026-09-28T20:03:43Z",
+      "s3VersionId": "8oFWxwzN9wuEFdBcxzpBXFCqTl7c8fYt",
+      "chunks": 41
+    },
+    "rag_v2": {
+      "queries": 5,
+      "largest_query_estimated_tokens": 973,
+      "logged_query": {
+        "event": "rag_query",
+        "pr": 3,
+        "index_version": 2,
+        "index_commit": "5a0eb9b8741bab26cbc79e621ff6eea060eabfde",
+        "queries": 5,
+        "query_parts_split": 0,
+        "excluded_overlapping": 6,
+        "candidates": 35,
+        "selected": 8,
+        "scores": {
+          "min": 0.6246,
+          "max": 0.8277,
+          "mean_selected": 0.7894,
+          "min_selected": 0.7691,
+          "mean_rest": 0.664,
+          "max_rest": 0.7685,
+          "margin_at_cut": 0.0006,
+          "standardised_gap": 2.12
+        }
+      },
+      "logged_chunks": [
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 1,
+          "id": "src/main/java/com/codereview/app/auth/JwtValidator.java#JwtValidator.extractUsername(String):40-42",
+          "score": 0.8277,
+          "matched_query": "src/main/java/com/codereview/app/auth/JwtValidator.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 2,
+          "id": "src/main/java/com/codereview/app/auth/JwtValidator.java#JwtValidator.JwtValidator(String,long):23-28",
+          "score": 0.804,
+          "matched_query": "src/main/java/com/codereview/app/auth/JwtValidator.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 3,
+          "id": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java#JwtValidatorTest.generatedTokenIsValid():17-22",
+          "score": 0.7989,
+          "matched_query": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 4,
+          "id": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java#JwtValidatorTest.setUp():12-15",
+          "score": 0.7855,
+          "matched_query": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 5,
+          "id": "src/test/java/com/codereview/app/auth/AuthControllerTest.java#AuthControllerTest.loginWithValidCredentialsReturnsToken():27-36",
+          "score": 0.7784,
+          "matched_query": "src/main/java/com/codereview/app/auth/AuthController.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 6,
+          "id": "src/main/java/com/codereview/app/auth/JwtValidator.java#JwtValidator.generateToken(String):30-38",
+          "score": 0.7764,
+          "matched_query": "src/main/java/com/codereview/app/auth/JwtValidator.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 7,
+          "id": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java#JwtValidatorTest.extractUsernameReturnsSubject():24-29",
+          "score": 0.7753,
+          "matched_query": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 3,
+          "rank": 8,
+          "id": "src/main/java/com/codereview/app/auth/LoginRequest.java#LoginRequest:3-4",
+          "score": 0.7691,
+          "matched_query": "src/main/java/com/codereview/app/auth/LoginResponse.java"
+        }
+      ],
+      "scores_from_logs": {
+        "min": 0.6246,
+        "max": 0.8277,
+        "mean_selected": 0.7894,
+        "min_selected": 0.7691,
+        "mean_rest": 0.664,
+        "max_rest": 0.7685,
+        "margin_at_cut": 0.0006,
+        "standardised_gap": 2.12
+      },
+      "scores_recomputed": null,
+      "max_logged_vs_recomputed_score_diff": null
+    },
+    "llm_attempts": [
+      {
+        "event": "llm_attempt",
+        "pr": 3,
+        "model": "gemini:gemini-3.5-flash:high",
+        "budget": 100000,
+        "estimated_prompt": 4415,
+        "context_chunks_kept": 8,
+        "context_chunks_dropped": 0,
+        "skipped": false
+      },
+      {
+        "event": "llm_attempt",
+        "pr": 3,
+        "model": "cerebras:gpt-oss-120b:medium",
+        "budget": 18000,
+        "estimated_prompt": 4415,
+        "context_chunks_kept": 8,
+        "context_chunks_dropped": 0,
+        "skipped": false
+      }
+    ],
+    "packed": {
+      "budget": 18000,
+      "estimated_prompt": 4415,
+      "chunks_kept": 8,
+      "chunks_dropped": 0
+    },
+    "rag_returned": [
+      "src/main/java/com/codereview/app/auth/JwtValidator.java#JwtValidator.extractUsername(String):40-42",
+      "src/main/java/com/codereview/app/auth/JwtValidator.java#JwtValidator.JwtValidator(String,long):23-28",
+      "src/test/java/com/codereview/app/auth/JwtValidatorTest.java#JwtValidatorTest.generatedTokenIsValid():17-22",
+      "src/test/java/com/codereview/app/auth/JwtValidatorTest.java#JwtValidatorTest.setUp():12-15",
+      "src/test/java/com/codereview/app/auth/AuthControllerTest.java#AuthControllerTest.loginWithValidCredentialsReturnsToken():27-36",
+      "src/main/java/com/codereview/app/auth/JwtValidator.java#JwtValidator.generateToken(String):30-38",
+      "src/test/java/com/codereview/app/auth/JwtValidatorTest.java#JwtValidatorTest.extractUsernameReturnsSubject():24-29",
+      "src/main/java/com/codereview/app/auth/LoginRequest.java#LoginRequest:3-4"
+    ],
+    "rag_reproduced": null,
+    "rag_ranking": null,
+    "model_used": "cerebras:gpt-oss-120b:medium",
+    "fell_back": true,
+    "parse_fallback": false,
+    "log_lines": [
+      "[WARNING]\t2026-09-28T20:37:54.367Z\t47c32622-7c1a-4c09-9993-2bb9df0b27bf\tModel gemini:gemini-3.5-flash:high failed for PR 3 (gemini:gemini-3.5-flash returned HTTP 503: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n); trying next model\n",
+      "[INFO]\t2026-09-28T20:37:56.371Z\t47c32622-7c1a-4c09-9993-2bb9df0b27bf\tcerebras:gpt-oss-120b answered: finish_reason=stop usage={'total_tokens': 6132, 'completion_tokens': 3071, 'completion_tokens_details': {'accepted_prediction_tokens': 0, 'rejected_prediction_tokens': 0, 'reasoning_tokens': 2666}, 'prompt_tokens': 3061, 'prompt_tokens_details': {'cached_tokens': 2944}}\n"
+    ],
+    "summary": "The changes add detailed logging and error messages in AuthController, introduce user existence checks, modify JwtValidator to accept tokens even when verification fails, expand clock skew tolerance, and alter the LoginResponse record to include a message field. Several of these adjustments introduce security and compatibility concerns.",
+    "comments": [
+      {
+        "path": "src/main/java/com/codereview/app/auth/AuthController.java",
+        "line": 29,
+        "body": "Logging the password in clear text (LOGGER.warn with request.password()) writes credentials to application logs, creating a risk of credential leakage and non‑compliance with security best practices.",
+        "category": "security",
+        "severity": "high"
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/AuthController.java",
+        "line": 32,
+        "body": "Returning different error messages for \"User not found\" versus \"Incorrect password\" enables user enumeration, allowing an attacker to discover valid usernames based on the response content.",
+        "category": "security",
+        "severity": "high"
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/JwtValidator.java",
+        "line": 58,
+        "body": "The catch block for JwtException and IllegalArgumentException logs a warning but then returns true, effectively accepting any malformed or tampered token, which defeats token authentication entirely.",
+        "category": "security",
+        "severity": "high"
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/JwtValidator.java",
+        "line": 28,
+        "body": "Allowing a clock‑skew window of 24 hours is excessively permissive and can let expired or compromised tokens remain valid for an unreasonably long period, increasing the attack surface.",
+        "category": "security",
+        "severity": "medium"
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/LoginResponse.java",
+        "line": 1,
+        "body": "Changing the LoginResponse record to include a second 'message' field modifies the API contract, potentially breaking existing clients that expect only a 'token' field in the JSON response.",
+        "category": "maintainability",
+        "severity": "medium"
+      }
+    ]
+  },
+  {
+    "execution": "81c69bce-e04b-5ed5-eb81-587790937f76_f11682cb-112a-241d-7566-07477eb641c7",
+    "started": "2026-09-28T17:29:07.320000-03:00",
+    "status": "SUCCEEDED",
+    "prNumber": 7,
+    "sha": "f0e189575b37d7a6a1f5b5b3ef33fe6772660ba1",
+    "diffKey": "prs/7/f0e189575b37d7a6a1f5b5b3ef33fe6772660ba1.diff",
+    "complexity": "medium",
+    "tokens": {
+      "instructions": {
+        "o200k": 525,
+        "gemini": null
+      },
+      "diff": {
+        "o200k": 1451,
+        "gemini": null
+      },
+      "context": {
+        "o200k": 727,
+        "gemini": null
+      },
+      "total": {
+        "o200k": 2702,
+        "gemini": null
+      }
+    },
+    "provider_prompt_tokens": 2773,
+    "diff_embedding_tokens": null,
+    "diff_truncated_for_embedding": null,
+    "diff_o200k_tokens": 1451,
+    "index": {
+      "version": 2,
+      "commit": "5a0eb9b8741bab26cbc79e621ff6eea060eabfde",
+      "generatedAt": "2026-09-28T20:03:43Z",
+      "s3VersionId": "8oFWxwzN9wuEFdBcxzpBXFCqTl7c8fYt",
+      "chunks": 41
+    },
+    "rag_v2": {
+      "queries": 5,
+      "largest_query_estimated_tokens": 570,
+      "logged_query": {
+        "event": "rag_query",
+        "pr": 7,
+        "index_version": 2,
+        "index_commit": "5a0eb9b8741bab26cbc79e621ff6eea060eabfde",
+        "queries": 5,
+        "query_parts_split": 0,
+        "excluded_overlapping": 6,
+        "candidates": 35,
+        "selected": 8,
+        "scores": {
+          "min": 0.6226,
+          "max": 0.8022,
+          "mean_selected": 0.786,
+          "min_selected": 0.7728,
+          "mean_rest": 0.6903,
+          "max_rest": 0.7718,
+          "margin_at_cut": 0.001,
+          "standardised_gap": 1.72
+        }
+      },
+      "logged_chunks": [
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 1,
+          "id": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.createReturnsCreatedTask():50-60",
+          "score": 0.8022,
+          "matched_query": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 2,
+          "id": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.updateReplacesExistingTask():38-47",
+          "score": 0.7975,
+          "matched_query": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 3,
+          "id": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.updateReturnsEmptyWhenTaskDoesNotExist():33-36",
+          "score": 0.7964,
+          "matched_query": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 4,
+          "id": "src/main/java/com/codereview/app/tasks/TaskService.java#TaskService.findById(Long):21-23",
+          "score": 0.7868,
+          "matched_query": "src/main/java/com/codereview/app/tasks/TaskService.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 5,
+          "id": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.getByIdReturnsNotFoundWhenMissing():42-48",
+          "score": 0.7793,
+          "matched_query": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 6,
+          "id": "src/main/java/com/codereview/app/tasks/TaskController.java#TaskController.create(Task):38-41",
+          "score": 0.7792,
+          "matched_query": "src/main/java/com/codereview/app/tasks/TaskController.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 7,
+          "id": "src/main/java/com/codereview/app/tasks/TaskController.java#TaskController.getById(Long):31-36",
+          "score": 0.7738,
+          "matched_query": "src/main/java/com/codereview/app/tasks/TaskController.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 8,
+          "id": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.findByIdReturnsEmptyWhenMissing():28-31",
+          "score": 0.7728,
+          "matched_query": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java"
+        }
+      ],
+      "scores_from_logs": {
+        "min": 0.6226,
+        "max": 0.8022,
+        "mean_selected": 0.786,
+        "min_selected": 0.7728,
+        "mean_rest": 0.6903,
+        "max_rest": 0.7718,
+        "margin_at_cut": 0.001,
+        "standardised_gap": 1.72
+      },
+      "scores_recomputed": null,
+      "max_logged_vs_recomputed_score_diff": null
+    },
+    "llm_attempts": [
+      {
+        "event": "llm_attempt",
+        "pr": 7,
+        "model": "groq:openai/gpt-oss-120b:medium",
+        "budget": 4300,
+        "estimated_prompt": 3793,
+        "context_chunks_kept": 8,
+        "context_chunks_dropped": 0,
+        "skipped": false
+      }
+    ],
+    "packed": {
+      "budget": 4300,
+      "estimated_prompt": 3793,
+      "chunks_kept": 8,
+      "chunks_dropped": 0
+    },
+    "rag_returned": [
+      "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.createReturnsCreatedTask():50-60",
+      "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.updateReplacesExistingTask():38-47",
+      "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.updateReturnsEmptyWhenTaskDoesNotExist():33-36",
+      "src/main/java/com/codereview/app/tasks/TaskService.java#TaskService.findById(Long):21-23",
+      "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.getByIdReturnsNotFoundWhenMissing():42-48",
+      "src/main/java/com/codereview/app/tasks/TaskController.java#TaskController.create(Task):38-41",
+      "src/main/java/com/codereview/app/tasks/TaskController.java#TaskController.getById(Long):31-36",
+      "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.findByIdReturnsEmptyWhenMissing():28-31"
+    ],
+    "rag_reproduced": null,
+    "rag_ranking": null,
+    "model_used": "groq:openai/gpt-oss-120b:medium",
+    "fell_back": false,
+    "parse_fallback": false,
+    "log_lines": [
+      "[INFO]\t2026-09-28T20:29:16.794Z\tffc5f2d0-d3b5-4224-ab5f-bc9708a28fcd\tgroq:openai/gpt-oss-120b answered: finish_reason=stop usage={'queue_time': 0.084118303, 'prompt_tokens': 2773, 'prompt_time': 0.13084118, 'completion_tokens': 3513, 'completion_time': 7.312244869, 'total_tokens': 6286, 'total_time': 7.443086049, 'completion_tokens_details': {'reasoning_tokens': 3352}}\n"
+    ],
+    "summary": "Introduces InvalidTaskException, adds title validation in TaskService and a controller exception handler, and updates tests accordingly.",
+    "comments": [
+      {
+        "path": "src/main/java/com/codereview/app/tasks/TaskService.java",
+        "line": 45,
+        "body": "Calling task.title() without first checking if the Task argument is null can cause a NullPointerException, leading to 500 errors instead of a controlled Bad Request.",
+        "category": "bug",
+        "severity": "medium"
+      },
+      {
+        "path": "src/main/java/com/codereview/app/tasks/TaskService.java",
+        "line": 12,
+        "body": "The maximum title length is a hard‑coded magic number; extracting it to a configurable property would improve flexibility and maintainability.",
+        "category": "maintainability",
+        "severity": "low"
+      }
+    ]
+  },
+  {
+    "execution": "eacf9dd3-c04e-0bc3-ab19-538e249c2166_b7f6af3b-3a22-8910-6048-0d94b7a5d4e8",
+    "started": "2026-09-28T17:34:31.014000-03:00",
+    "status": "SUCCEEDED",
+    "prNumber": 7,
+    "sha": "53442e0c2039f907250145fd34b0c088d0a92c3d",
+    "diffKey": "prs/7/53442e0c2039f907250145fd34b0c088d0a92c3d.diff",
+    "complexity": "medium",
+    "tokens": {
+      "instructions": {
+        "o200k": 525,
+        "gemini": null
+      },
+      "diff": {
+        "o200k": 1451,
+        "gemini": null
+      },
+      "context": {
+        "o200k": 727,
+        "gemini": null
+      },
+      "total": {
+        "o200k": 2702,
+        "gemini": null
+      }
+    },
+    "provider_prompt_tokens": 2773,
+    "diff_embedding_tokens": null,
+    "diff_truncated_for_embedding": null,
+    "diff_o200k_tokens": 1451,
+    "index": {
+      "version": 2,
+      "commit": "5a0eb9b8741bab26cbc79e621ff6eea060eabfde",
+      "generatedAt": "2026-09-28T20:03:43Z",
+      "s3VersionId": "8oFWxwzN9wuEFdBcxzpBXFCqTl7c8fYt",
+      "chunks": 41
+    },
+    "rag_v2": {
+      "queries": 5,
+      "largest_query_estimated_tokens": 570,
+      "logged_query": {
+        "event": "rag_query",
+        "pr": 7,
+        "index_version": 2,
+        "index_commit": "5a0eb9b8741bab26cbc79e621ff6eea060eabfde",
+        "queries": 5,
+        "query_parts_split": 0,
+        "excluded_overlapping": 6,
+        "candidates": 35,
+        "selected": 8,
+        "scores": {
+          "min": 0.6226,
+          "max": 0.8022,
+          "mean_selected": 0.786,
+          "min_selected": 0.7728,
+          "mean_rest": 0.6903,
+          "max_rest": 0.7718,
+          "margin_at_cut": 0.001,
+          "standardised_gap": 1.72
+        }
+      },
+      "logged_chunks": [
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 1,
+          "id": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.createReturnsCreatedTask():50-60",
+          "score": 0.8022,
+          "matched_query": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 2,
+          "id": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.updateReplacesExistingTask():38-47",
+          "score": 0.7975,
+          "matched_query": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 3,
+          "id": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.updateReturnsEmptyWhenTaskDoesNotExist():33-36",
+          "score": 0.7964,
+          "matched_query": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 4,
+          "id": "src/main/java/com/codereview/app/tasks/TaskService.java#TaskService.findById(Long):21-23",
+          "score": 0.7868,
+          "matched_query": "src/main/java/com/codereview/app/tasks/TaskService.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 5,
+          "id": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.getByIdReturnsNotFoundWhenMissing():42-48",
+          "score": 0.7793,
+          "matched_query": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 6,
+          "id": "src/main/java/com/codereview/app/tasks/TaskController.java#TaskController.create(Task):38-41",
+          "score": 0.7792,
+          "matched_query": "src/main/java/com/codereview/app/tasks/TaskController.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 7,
+          "id": "src/main/java/com/codereview/app/tasks/TaskController.java#TaskController.getById(Long):31-36",
+          "score": 0.7738,
+          "matched_query": "src/main/java/com/codereview/app/tasks/TaskController.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 8,
+          "id": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.findByIdReturnsEmptyWhenMissing():28-31",
+          "score": 0.7728,
+          "matched_query": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java"
+        }
+      ],
+      "scores_from_logs": {
+        "min": 0.6226,
+        "max": 0.8022,
+        "mean_selected": 0.786,
+        "min_selected": 0.7728,
+        "mean_rest": 0.6903,
+        "max_rest": 0.7718,
+        "margin_at_cut": 0.001,
+        "standardised_gap": 1.72
+      },
+      "scores_recomputed": null,
+      "max_logged_vs_recomputed_score_diff": null
+    },
+    "llm_attempts": [
+      {
+        "event": "llm_attempt",
+        "pr": 7,
+        "model": "groq:openai/gpt-oss-120b:medium",
+        "budget": 4300,
+        "estimated_prompt": 3793,
+        "context_chunks_kept": 8,
+        "context_chunks_dropped": 0,
+        "skipped": false
+      }
+    ],
+    "packed": {
+      "budget": 4300,
+      "estimated_prompt": 3793,
+      "chunks_kept": 8,
+      "chunks_dropped": 0
+    },
+    "rag_returned": [
+      "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.createReturnsCreatedTask():50-60",
+      "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.updateReplacesExistingTask():38-47",
+      "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.updateReturnsEmptyWhenTaskDoesNotExist():33-36",
+      "src/main/java/com/codereview/app/tasks/TaskService.java#TaskService.findById(Long):21-23",
+      "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.getByIdReturnsNotFoundWhenMissing():42-48",
+      "src/main/java/com/codereview/app/tasks/TaskController.java#TaskController.create(Task):38-41",
+      "src/main/java/com/codereview/app/tasks/TaskController.java#TaskController.getById(Long):31-36",
+      "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.findByIdReturnsEmptyWhenMissing():28-31"
+    ],
+    "rag_reproduced": null,
+    "rag_ranking": null,
+    "model_used": "groq:openai/gpt-oss-120b:medium",
+    "fell_back": false,
+    "parse_fallback": false,
+    "log_lines": [
+      "[INFO]\t2026-09-28T20:34:35.308Z\t42f5c84f-1aaf-42e2-8485-8af2d69725de\tgroq:openai/gpt-oss-120b answered: finish_reason=stop usage={'queue_time': 0.092591952, 'prompt_tokens': 2773, 'prompt_time': 0.126215412, 'completion_tokens': 1157, 'completion_time': 2.376885637, 'total_tokens': 3930, 'total_time': 2.503101049, 'completion_tokens_details': {'reasoning_tokens': 1055}}\n"
+    ],
+    "summary": "Adds custom InvalidTaskException, title validation in TaskService, and an exception handler in TaskController with corresponding tests.",
+    "comments": [
+      {
+        "path": "src/main/java/com/codereview/app/tasks/TaskController.java",
+        "line": 55,
+        "body": "The @ExceptionHandler method is package‑private; while Spring can invoke it, making it public improves readability and aligns with typical controller method visibility.",
+        "category": "maintainability",
+        "severity": "low"
+      }
+    ]
+  },
+  {
+    "execution": "4b3fb0c8-ac39-85e7-138b-332a16303387_1b4d3762-51c8-de35-5e3c-f8f5494f2de3",
+    "started": "2026-09-28T17:39:25.630000-03:00",
+    "status": "SUCCEEDED",
+    "prNumber": 7,
+    "sha": "b66eab9c3d3687a72ab0bd1eda38689698bb6056",
+    "diffKey": "prs/7/b66eab9c3d3687a72ab0bd1eda38689698bb6056.diff",
+    "complexity": "medium",
+    "tokens": {
+      "instructions": {
+        "o200k": 525,
+        "gemini": null
+      },
+      "diff": {
+        "o200k": 1451,
+        "gemini": null
+      },
+      "context": {
+        "o200k": 727,
+        "gemini": null
+      },
+      "total": {
+        "o200k": 2702,
+        "gemini": null
+      }
+    },
+    "provider_prompt_tokens": 2773,
+    "diff_embedding_tokens": null,
+    "diff_truncated_for_embedding": null,
+    "diff_o200k_tokens": 1451,
+    "index": {
+      "version": 2,
+      "commit": "5a0eb9b8741bab26cbc79e621ff6eea060eabfde",
+      "generatedAt": "2026-09-28T20:03:43Z",
+      "s3VersionId": "8oFWxwzN9wuEFdBcxzpBXFCqTl7c8fYt",
+      "chunks": 41
+    },
+    "rag_v2": {
+      "queries": 5,
+      "largest_query_estimated_tokens": 570,
+      "logged_query": {
+        "event": "rag_query",
+        "pr": 7,
+        "index_version": 2,
+        "index_commit": "5a0eb9b8741bab26cbc79e621ff6eea060eabfde",
+        "queries": 5,
+        "query_parts_split": 0,
+        "excluded_overlapping": 6,
+        "candidates": 35,
+        "selected": 8,
+        "scores": {
+          "min": 0.6226,
+          "max": 0.8022,
+          "mean_selected": 0.786,
+          "min_selected": 0.7728,
+          "mean_rest": 0.6903,
+          "max_rest": 0.7718,
+          "margin_at_cut": 0.001,
+          "standardised_gap": 1.72
+        }
+      },
+      "logged_chunks": [
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 1,
+          "id": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.createReturnsCreatedTask():50-60",
+          "score": 0.8022,
+          "matched_query": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 2,
+          "id": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.updateReplacesExistingTask():38-47",
+          "score": 0.7975,
+          "matched_query": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 3,
+          "id": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.updateReturnsEmptyWhenTaskDoesNotExist():33-36",
+          "score": 0.7964,
+          "matched_query": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 4,
+          "id": "src/main/java/com/codereview/app/tasks/TaskService.java#TaskService.findById(Long):21-23",
+          "score": 0.7868,
+          "matched_query": "src/main/java/com/codereview/app/tasks/TaskService.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 5,
+          "id": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.getByIdReturnsNotFoundWhenMissing():42-48",
+          "score": 0.7793,
+          "matched_query": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 6,
+          "id": "src/main/java/com/codereview/app/tasks/TaskController.java#TaskController.create(Task):38-41",
+          "score": 0.7792,
+          "matched_query": "src/main/java/com/codereview/app/tasks/TaskController.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 7,
+          "id": "src/main/java/com/codereview/app/tasks/TaskController.java#TaskController.getById(Long):31-36",
+          "score": 0.7738,
+          "matched_query": "src/main/java/com/codereview/app/tasks/TaskController.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 7,
+          "rank": 8,
+          "id": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.findByIdReturnsEmptyWhenMissing():28-31",
+          "score": 0.7728,
+          "matched_query": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java"
+        }
+      ],
+      "scores_from_logs": {
+        "min": 0.6226,
+        "max": 0.8022,
+        "mean_selected": 0.786,
+        "min_selected": 0.7728,
+        "mean_rest": 0.6903,
+        "max_rest": 0.7718,
+        "margin_at_cut": 0.001,
+        "standardised_gap": 1.72
+      },
+      "scores_recomputed": null,
+      "max_logged_vs_recomputed_score_diff": null
+    },
+    "llm_attempts": [
+      {
+        "event": "llm_attempt",
+        "pr": 7,
+        "model": "groq:openai/gpt-oss-120b:medium",
+        "budget": 4300,
+        "estimated_prompt": 3793,
+        "context_chunks_kept": 8,
+        "context_chunks_dropped": 0,
+        "skipped": false
+      }
+    ],
+    "packed": {
+      "budget": 4300,
+      "estimated_prompt": 3793,
+      "chunks_kept": 8,
+      "chunks_dropped": 0
+    },
+    "rag_returned": [
+      "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.createReturnsCreatedTask():50-60",
+      "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.updateReplacesExistingTask():38-47",
+      "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.updateReturnsEmptyWhenTaskDoesNotExist():33-36",
+      "src/main/java/com/codereview/app/tasks/TaskService.java#TaskService.findById(Long):21-23",
+      "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.getByIdReturnsNotFoundWhenMissing():42-48",
+      "src/main/java/com/codereview/app/tasks/TaskController.java#TaskController.create(Task):38-41",
+      "src/main/java/com/codereview/app/tasks/TaskController.java#TaskController.getById(Long):31-36",
+      "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.findByIdReturnsEmptyWhenMissing():28-31"
+    ],
+    "rag_reproduced": null,
+    "rag_ranking": null,
+    "model_used": "groq:openai/gpt-oss-120b:medium",
+    "fell_back": false,
+    "parse_fallback": false,
+    "log_lines": [
+      "[INFO]\t2026-09-28T20:39:32.790Z\t5111480d-e593-49dc-bb80-79284e778f31\tgroq:openai/gpt-oss-120b answered: finish_reason=stop usage={'queue_time': 0.141946623, 'prompt_tokens': 2773, 'prompt_time': 0.141923822, 'completion_tokens': 2311, 'completion_time': 4.814072708, 'total_tokens': 5084, 'total_time': 4.95599653, 'completion_tokens_details': {'reasoning_tokens': 2188}}\n"
+    ],
+    "summary": "Introduced InvalidTaskException and added title validation with length limit in TaskService, plus controller exception handling and corresponding tests.",
+    "comments": [
+      {
+        "path": "src/main/java/com/codereview/app/tasks/TaskService.java",
+        "line": 34,
+        "body": "validateTitle(task) is called before checking whether the task ID exists, causing a BadRequest error for an invalid title even when the task is not found; this changes the expected 404 response to 400 and can leak validation details for non‑existent resources.",
+        "category": "bug",
+        "severity": "medium"
+      }
+    ]
+  },
+  {
+    "execution": "d46f541b-f5e4-027a-5b75-97bd519fa3c0_2b231179-4e66-de02-25c3-548f313469e6",
+    "started": "2026-09-28T17:30:54.328000-03:00",
+    "status": "SUCCEEDED",
+    "prNumber": 8,
+    "sha": "05e921f0763993991d9443e529417c9c2af9b802",
+    "diffKey": "prs/8/05e921f0763993991d9443e529417c9c2af9b802.diff",
+    "complexity": "high",
+    "tokens": {
+      "instructions": {
+        "o200k": 525,
+        "gemini": null
+      },
+      "diff": {
+        "o200k": 6531,
+        "gemini": null
+      },
+      "context": {
+        "o200k": 682,
+        "gemini": null
+      },
+      "total": {
+        "o200k": 7737,
+        "gemini": null
+      }
+    },
+    "provider_prompt_tokens": 7804,
+    "diff_embedding_tokens": null,
+    "diff_truncated_for_embedding": null,
+    "diff_o200k_tokens": 6531,
+    "index": {
+      "version": 2,
+      "commit": "5a0eb9b8741bab26cbc79e621ff6eea060eabfde",
+      "generatedAt": "2026-09-28T20:03:43Z",
+      "s3VersionId": "8oFWxwzN9wuEFdBcxzpBXFCqTl7c8fYt",
+      "chunks": 41
+    },
+    "rag_v2": {
+      "queries": 13,
+      "largest_query_estimated_tokens": 1799,
+      "logged_query": {
+        "event": "rag_query",
+        "pr": 8,
+        "index_version": 2,
+        "index_commit": "5a0eb9b8741bab26cbc79e621ff6eea060eabfde",
+        "queries": 13,
+        "query_parts_split": 2,
+        "excluded_overlapping": 0,
+        "candidates": 41,
+        "selected": 8,
+        "scores": {
+          "min": 0.6415,
+          "max": 0.8211,
+          "mean_selected": 0.7875,
+          "min_selected": 0.7765,
+          "mean_rest": 0.7219,
+          "max_rest": 0.7756,
+          "margin_at_cut": 0.0009,
+          "standardised_gap": 1.37
+        }
+      },
+      "logged_chunks": [
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 1,
+          "id": "src/main/java/com/codereview/app/tasks/Task.java#Task:3-4",
+          "score": 0.8211,
+          "matched_query": "src/main/java/com/codereview/app/projects/Project.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 2,
+          "id": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.createReturnsCreatedTask():50-60",
+          "score": 0.795,
+          "matched_query": "src/test/java/com/codereview/app/projects/ProjectControllerTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 3,
+          "id": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.getByIdReturnsNotFoundWhenMissing():42-48",
+          "score": 0.7899,
+          "matched_query": "src/test/java/com/codereview/app/projects/ProjectControllerTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 4,
+          "id": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.getAllReturnsTasks():33-40",
+          "score": 0.7838,
+          "matched_query": "src/test/java/com/codereview/app/projects/ProjectControllerTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 5,
+          "id": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.deleteReturnsNoContentWhenExisted():62-68",
+          "score": 0.7787,
+          "matched_query": "src/test/java/com/codereview/app/projects/ProjectControllerTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 6,
+          "id": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.createAssignsIncrementalId():19-26",
+          "score": 0.7775,
+          "matched_query": "src/test/java/com/codereview/app/projects/InMemoryProjectRepositoryTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 7,
+          "id": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.findByIdReturnsEmptyWhenMissing():28-31",
+          "score": 0.7775,
+          "matched_query": "src/test/java/com/codereview/app/projects/ProjectServiceTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 8,
+          "id": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.deleteReturnsTrueWhenTaskExisted():49-55",
+          "score": 0.7765,
+          "matched_query": "src/test/java/com/codereview/app/projects/ProjectServiceTest.java"
+        }
+      ],
+      "scores_from_logs": {
+        "min": 0.6415,
+        "max": 0.8211,
+        "mean_selected": 0.7875,
+        "min_selected": 0.7765,
+        "mean_rest": 0.7219,
+        "max_rest": 0.7756,
+        "margin_at_cut": 0.0009,
+        "standardised_gap": 1.37
+      },
+      "scores_recomputed": null,
+      "max_logged_vs_recomputed_score_diff": null
+    },
+    "llm_attempts": [
+      {
+        "event": "llm_attempt",
+        "pr": 8,
+        "model": "gemini:gemini-3.5-flash:high",
+        "budget": 100000,
+        "estimated_prompt": 11133,
+        "context_chunks_kept": 8,
+        "context_chunks_dropped": 0,
+        "skipped": false
+      },
+      {
+        "event": "llm_attempt",
+        "pr": 8,
+        "model": "cerebras:gpt-oss-120b:medium",
+        "budget": 18000,
+        "estimated_prompt": 11133,
+        "context_chunks_kept": 8,
+        "context_chunks_dropped": 0,
+        "skipped": false
+      }
+    ],
+    "packed": {
+      "budget": 18000,
+      "estimated_prompt": 11133,
+      "chunks_kept": 8,
+      "chunks_dropped": 0
+    },
+    "rag_returned": [
+      "src/main/java/com/codereview/app/tasks/Task.java#Task:3-4",
+      "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.createReturnsCreatedTask():50-60",
+      "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.getByIdReturnsNotFoundWhenMissing():42-48",
+      "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.getAllReturnsTasks():33-40",
+      "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.deleteReturnsNoContentWhenExisted():62-68",
+      "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.createAssignsIncrementalId():19-26",
+      "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.findByIdReturnsEmptyWhenMissing():28-31",
+      "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.deleteReturnsTrueWhenTaskExisted():49-55"
+    ],
+    "rag_reproduced": null,
+    "rag_ranking": null,
+    "model_used": "cerebras:gpt-oss-120b:medium",
+    "fell_back": true,
+    "parse_fallback": false,
+    "log_lines": [
+      "[WARNING]\t2026-09-28T20:30:57.098Z\t0067241b-2173-41df-b76a-4cf3b0abfd93\tModel gemini:gemini-3.5-flash:high failed for PR 8 (gemini:gemini-3.5-flash returned HTTP 503: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n); trying next model\n",
+      "[INFO]\t2026-09-28T20:30:58.397Z\t0067241b-2173-41df-b76a-4cf3b0abfd93\tcerebras:gpt-oss-120b answered: finish_reason=stop usage={'total_tokens': 9483, 'completion_tokens': 1679, 'completion_tokens_details': {'accepted_prediction_tokens': 0, 'rejected_prediction_tokens': 0, 'reasoning_tokens': 1574}, 'prompt_tokens': 7804, 'prompt_tokens_details': {'cached_tokens': 0}}\n"
+    ],
+    "summary": "Added project management API with in‑memory repository, service, controller, DTOs and tests.",
+    "comments": [
+      {
+        "path": "src/main/java/com/codereview/app/projects/InMemoryProjectRepository.java",
+        "line": 51,
+        "body": "The repository assigns IDs using nextId.getAndIncrement() without ensuring the generated ID is greater than any existing manually‑set IDs, which can cause duplicate keys and overwrite existing projects.",
+        "category": "bug",
+        "severity": "high"
+      }
+    ]
+  },
+  {
+    "execution": "02765bd8-9701-b1a1-a087-5461cc397760_36cd0669-08a5-2e82-59a6-dd59d2edebec",
+    "started": "2026-09-28T17:36:09.851000-03:00",
+    "status": "SUCCEEDED",
+    "prNumber": 8,
+    "sha": "b9bbe56e0c17bc99104dfdc4a1a9486ae553e4e7",
+    "diffKey": "prs/8/b9bbe56e0c17bc99104dfdc4a1a9486ae553e4e7.diff",
+    "complexity": "high",
+    "tokens": {
+      "instructions": {
+        "o200k": 525,
+        "gemini": null
+      },
+      "diff": {
+        "o200k": 6531,
+        "gemini": null
+      },
+      "context": {
+        "o200k": 682,
+        "gemini": null
+      },
+      "total": {
+        "o200k": 7737,
+        "gemini": null
+      }
+    },
+    "provider_prompt_tokens": 7804,
+    "diff_embedding_tokens": null,
+    "diff_truncated_for_embedding": null,
+    "diff_o200k_tokens": 6531,
+    "index": {
+      "version": 2,
+      "commit": "5a0eb9b8741bab26cbc79e621ff6eea060eabfde",
+      "generatedAt": "2026-09-28T20:03:43Z",
+      "s3VersionId": "8oFWxwzN9wuEFdBcxzpBXFCqTl7c8fYt",
+      "chunks": 41
+    },
+    "rag_v2": {
+      "queries": 13,
+      "largest_query_estimated_tokens": 1799,
+      "logged_query": {
+        "event": "rag_query",
+        "pr": 8,
+        "index_version": 2,
+        "index_commit": "5a0eb9b8741bab26cbc79e621ff6eea060eabfde",
+        "queries": 13,
+        "query_parts_split": 2,
+        "excluded_overlapping": 0,
+        "candidates": 41,
+        "selected": 8,
+        "scores": {
+          "min": 0.6415,
+          "max": 0.8211,
+          "mean_selected": 0.7875,
+          "min_selected": 0.7765,
+          "mean_rest": 0.7219,
+          "max_rest": 0.7756,
+          "margin_at_cut": 0.0009,
+          "standardised_gap": 1.37
+        }
+      },
+      "logged_chunks": [
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 1,
+          "id": "src/main/java/com/codereview/app/tasks/Task.java#Task:3-4",
+          "score": 0.8211,
+          "matched_query": "src/main/java/com/codereview/app/projects/Project.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 2,
+          "id": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.createReturnsCreatedTask():50-60",
+          "score": 0.795,
+          "matched_query": "src/test/java/com/codereview/app/projects/ProjectControllerTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 3,
+          "id": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.getByIdReturnsNotFoundWhenMissing():42-48",
+          "score": 0.7899,
+          "matched_query": "src/test/java/com/codereview/app/projects/ProjectControllerTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 4,
+          "id": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.getAllReturnsTasks():33-40",
+          "score": 0.7838,
+          "matched_query": "src/test/java/com/codereview/app/projects/ProjectControllerTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 5,
+          "id": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.deleteReturnsNoContentWhenExisted():62-68",
+          "score": 0.7787,
+          "matched_query": "src/test/java/com/codereview/app/projects/ProjectControllerTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 6,
+          "id": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.createAssignsIncrementalId():19-26",
+          "score": 0.7775,
+          "matched_query": "src/test/java/com/codereview/app/projects/InMemoryProjectRepositoryTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 7,
+          "id": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.findByIdReturnsEmptyWhenMissing():28-31",
+          "score": 0.7775,
+          "matched_query": "src/test/java/com/codereview/app/projects/ProjectServiceTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 8,
+          "id": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.deleteReturnsTrueWhenTaskExisted():49-55",
+          "score": 0.7765,
+          "matched_query": "src/test/java/com/codereview/app/projects/ProjectServiceTest.java"
+        }
+      ],
+      "scores_from_logs": {
+        "min": 0.6415,
+        "max": 0.8211,
+        "mean_selected": 0.7875,
+        "min_selected": 0.7765,
+        "mean_rest": 0.7219,
+        "max_rest": 0.7756,
+        "margin_at_cut": 0.0009,
+        "standardised_gap": 1.37
+      },
+      "scores_recomputed": null,
+      "max_logged_vs_recomputed_score_diff": null
+    },
+    "llm_attempts": [
+      {
+        "event": "llm_attempt",
+        "pr": 8,
+        "model": "gemini:gemini-3.5-flash:high",
+        "budget": 100000,
+        "estimated_prompt": 11133,
+        "context_chunks_kept": 8,
+        "context_chunks_dropped": 0,
+        "skipped": false
+      },
+      {
+        "event": "llm_attempt",
+        "pr": 8,
+        "model": "cerebras:gpt-oss-120b:medium",
+        "budget": 18000,
+        "estimated_prompt": 11133,
+        "context_chunks_kept": 8,
+        "context_chunks_dropped": 0,
+        "skipped": false
+      }
+    ],
+    "packed": {
+      "budget": 18000,
+      "estimated_prompt": 11133,
+      "chunks_kept": 8,
+      "chunks_dropped": 0
+    },
+    "rag_returned": [
+      "src/main/java/com/codereview/app/tasks/Task.java#Task:3-4",
+      "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.createReturnsCreatedTask():50-60",
+      "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.getByIdReturnsNotFoundWhenMissing():42-48",
+      "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.getAllReturnsTasks():33-40",
+      "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.deleteReturnsNoContentWhenExisted():62-68",
+      "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.createAssignsIncrementalId():19-26",
+      "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.findByIdReturnsEmptyWhenMissing():28-31",
+      "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.deleteReturnsTrueWhenTaskExisted():49-55"
+    ],
+    "rag_reproduced": null,
+    "rag_ranking": null,
+    "model_used": "cerebras:gpt-oss-120b:medium",
+    "fell_back": true,
+    "parse_fallback": false,
+    "log_lines": [
+      "[WARNING]\t2026-09-28T20:36:16.354Z\te6188def-a3aa-4292-96bd-04b4c7a1c089\tModel gemini:gemini-3.5-flash:high failed for PR 8 (gemini:gemini-3.5-flash returned HTTP 503: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n); trying next model\n",
+      "[INFO]\t2026-09-28T20:36:18.835Z\te6188def-a3aa-4292-96bd-04b4c7a1c089\tcerebras:gpt-oss-120b answered: finish_reason=stop usage={'total_tokens': 10303, 'completion_tokens': 2499, 'completion_tokens_details': {'accepted_prediction_tokens': 0, 'rejected_prediction_tokens': 0, 'reasoning_tokens': 2379}, 'prompt_tokens': 7804, 'prompt_tokens_details': {'cached_tokens': 0}}\n"
+    ],
+    "summary": "Added project CRUD functionality with in‑memory repository, service, controller, and tests.",
+    "comments": [
+      {
+        "path": "src/main/java/com/codereview/app/projects/InMemoryProjectRepository.java",
+        "line": 21,
+        "body": "Sorting projects by id assumes every stored Project has a non‑null id. If a Project with a null id were present (e.g., saved before ID assignment), Comparator.comparing(Project::id) will throw a NullPointerException, causing the whole operation to fail.",
+        "category": "bug",
+        "severity": "medium"
+      }
+    ]
+  },
+  {
+    "execution": "a6dfcf4c-6837-cee7-4127-909d2b702ff1_40d3f498-32d4-a298-7465-e0d36530b322",
+    "started": "2026-09-28T17:41:09.540000-03:00",
+    "status": "SUCCEEDED",
+    "prNumber": 8,
+    "sha": "a77957022b76540b9542b0ecd9be129c96f20388",
+    "diffKey": "prs/8/a77957022b76540b9542b0ecd9be129c96f20388.diff",
+    "complexity": "high",
+    "tokens": {
+      "instructions": {
+        "o200k": 525,
+        "gemini": null
+      },
+      "diff": {
+        "o200k": 6531,
+        "gemini": null
+      },
+      "context": {
+        "o200k": 682,
+        "gemini": null
+      },
+      "total": {
+        "o200k": 7737,
+        "gemini": null
+      }
+    },
+    "provider_prompt_tokens": 7804,
+    "diff_embedding_tokens": null,
+    "diff_truncated_for_embedding": null,
+    "diff_o200k_tokens": 6531,
+    "index": {
+      "version": 2,
+      "commit": "5a0eb9b8741bab26cbc79e621ff6eea060eabfde",
+      "generatedAt": "2026-09-28T20:03:43Z",
+      "s3VersionId": "8oFWxwzN9wuEFdBcxzpBXFCqTl7c8fYt",
+      "chunks": 41
+    },
+    "rag_v2": {
+      "queries": 13,
+      "largest_query_estimated_tokens": 1799,
+      "logged_query": {
+        "event": "rag_query",
+        "pr": 8,
+        "index_version": 2,
+        "index_commit": "5a0eb9b8741bab26cbc79e621ff6eea060eabfde",
+        "queries": 13,
+        "query_parts_split": 2,
+        "excluded_overlapping": 0,
+        "candidates": 41,
+        "selected": 8,
+        "scores": {
+          "min": 0.6415,
+          "max": 0.8211,
+          "mean_selected": 0.7875,
+          "min_selected": 0.7765,
+          "mean_rest": 0.7219,
+          "max_rest": 0.7756,
+          "margin_at_cut": 0.0009,
+          "standardised_gap": 1.37
+        }
+      },
+      "logged_chunks": [
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 1,
+          "id": "src/main/java/com/codereview/app/tasks/Task.java#Task:3-4",
+          "score": 0.8211,
+          "matched_query": "src/main/java/com/codereview/app/projects/Project.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 2,
+          "id": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.createReturnsCreatedTask():50-60",
+          "score": 0.795,
+          "matched_query": "src/test/java/com/codereview/app/projects/ProjectControllerTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 3,
+          "id": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.getByIdReturnsNotFoundWhenMissing():42-48",
+          "score": 0.7899,
+          "matched_query": "src/test/java/com/codereview/app/projects/ProjectControllerTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 4,
+          "id": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.getAllReturnsTasks():33-40",
+          "score": 0.7838,
+          "matched_query": "src/test/java/com/codereview/app/projects/ProjectControllerTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 5,
+          "id": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.deleteReturnsNoContentWhenExisted():62-68",
+          "score": 0.7787,
+          "matched_query": "src/test/java/com/codereview/app/projects/ProjectControllerTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 6,
+          "id": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.createAssignsIncrementalId():19-26",
+          "score": 0.7775,
+          "matched_query": "src/test/java/com/codereview/app/projects/InMemoryProjectRepositoryTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 7,
+          "id": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.findByIdReturnsEmptyWhenMissing():28-31",
+          "score": 0.7775,
+          "matched_query": "src/test/java/com/codereview/app/projects/ProjectServiceTest.java"
+        },
+        {
+          "event": "rag_chunk",
+          "pr": 8,
+          "rank": 8,
+          "id": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.deleteReturnsTrueWhenTaskExisted():49-55",
+          "score": 0.7765,
+          "matched_query": "src/test/java/com/codereview/app/projects/ProjectServiceTest.java"
+        }
+      ],
+      "scores_from_logs": {
+        "min": 0.6415,
+        "max": 0.8211,
+        "mean_selected": 0.7875,
+        "min_selected": 0.7765,
+        "mean_rest": 0.7219,
+        "max_rest": 0.7756,
+        "margin_at_cut": 0.0009,
+        "standardised_gap": 1.37
+      },
+      "scores_recomputed": null,
+      "max_logged_vs_recomputed_score_diff": null
+    },
+    "llm_attempts": [
+      {
+        "event": "llm_attempt",
+        "pr": 8,
+        "model": "gemini:gemini-3.5-flash:high",
+        "budget": 100000,
+        "estimated_prompt": 11133,
+        "context_chunks_kept": 8,
+        "context_chunks_dropped": 0,
+        "skipped": false
+      },
+      {
+        "event": "llm_attempt",
+        "pr": 8,
+        "model": "cerebras:gpt-oss-120b:medium",
+        "budget": 18000,
+        "estimated_prompt": 11133,
+        "context_chunks_kept": 8,
+        "context_chunks_dropped": 0,
+        "skipped": false
+      }
+    ],
+    "packed": {
+      "budget": 18000,
+      "estimated_prompt": 11133,
+      "chunks_kept": 8,
+      "chunks_dropped": 0
+    },
+    "rag_returned": [
+      "src/main/java/com/codereview/app/tasks/Task.java#Task:3-4",
+      "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.createReturnsCreatedTask():50-60",
+      "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.getByIdReturnsNotFoundWhenMissing():42-48",
+      "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.getAllReturnsTasks():33-40",
+      "src/test/java/com/codereview/app/tasks/TaskControllerTest.java#TaskControllerTest.deleteReturnsNoContentWhenExisted():62-68",
+      "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.createAssignsIncrementalId():19-26",
+      "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.findByIdReturnsEmptyWhenMissing():28-31",
+      "src/test/java/com/codereview/app/tasks/TaskServiceTest.java#TaskServiceTest.deleteReturnsTrueWhenTaskExisted():49-55"
+    ],
+    "rag_reproduced": null,
+    "rag_ranking": null,
+    "model_used": "cerebras:gpt-oss-120b:medium",
+    "fell_back": true,
+    "parse_fallback": false,
+    "log_lines": [
+      "[WARNING]\t2026-09-28T20:41:12.063Z\t5ddf9f22-a421-4fb0-ac64-73b6875f804b\tModel gemini:gemini-3.5-flash:high failed for PR 8 (gemini:gemini-3.5-flash returned HTTP 503: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n); trying next model\n",
+      "[INFO]\t2026-09-28T20:41:13.531Z\t5ddf9f22-a421-4fb0-ac64-73b6875f804b\tcerebras:gpt-oss-120b answered: finish_reason=stop usage={'total_tokens': 9786, 'completion_tokens': 1982, 'completion_tokens_details': {'accepted_prediction_tokens': 0, 'rejected_prediction_tokens': 0, 'reasoning_tokens': 1866}, 'prompt_tokens': 7804, 'prompt_tokens_details': {'cached_tokens': 0}}\n"
+    ],
+    "summary": "Introduces project domain classes, an in‑memory repository, service layer, REST controller, request records and comprehensive unit tests for the new functionality.",
+    "comments": [
+      {
+        "path": "src/main/java/com/codereview/app/projects/InMemoryProjectRepository.java",
+        "line": 44,
+        "body": "Potential NullPointerException: the filter uses project.name().equalsIgnoreCase(name) without checking if the stored project's name is null, which could crash if a Project with a null name exists.",
+        "category": "bug",
+        "severity": "medium"
+      }
+    ]
+  }
+]
