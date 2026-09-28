@@ -724,6 +724,30 @@ keeping Gemini `:high` in the list at all.*
   that structured decisions like this belong to Jev, not a re-implemented rule in this repo);
   a lower/different numeric threshold (400 lines / 10 files chosen to mirror the pre-existing
   `MEDIUM_MAX_LINES = 400` stub constant, so the two don't silently disagree).
+- **Known gap, confirmed post-deploy: this clause can turn a large PR's review from empty
+  into completely absent.** Reclassifying PR #8 (11 files, +686 lines, no sensitive paths)
+  from `medium` to `high` moved it onto `LLM_MODELS_HIGH`, and the real run failed outright —
+  Step Functions' execution ended `FAILED`, so **no review was posted to GitHub at all**,
+  where the old `medium` classification at least posted an empty-but-valid review. Both
+  attempts hit the same wall: Groq's `:medium` fallback returned **HTTP 413 twice**, at
+  **8,249 and 8,283 requested tokens** against its 8,000 TPM ceiling. PR #8's raw diff alone
+  is ~6,531 tokens (see "Token budget of the rubric and security checklist" above); this
+  round's rubric adds another 256 tokens on top of the pre-existing base instructions, and
+  that's enough to push a request that was *already* close to the ceiling over it — this
+  failure is not purely a consequence of the size clause reclassifying the PR; the rubric's
+  own token cost is part of why the fallback no longer fits either. Gemini `:high`, the lead
+  entry, failed too, but on the other resource: a 90-second client-side read timeout on the
+  first attempt (the prompt is large enough — ~6,500 tokens — that Gemini's reasoning pass can
+  run past `GEMINI_HIGH_REASONING_READ_TIMEOUT_SECONDS`), then an HTTP 503 on the Step
+  Functions retry. For comparison, PR #3's real `:high` run (a much smaller ~600-token diff)
+  completed in 84.7s, comfortably inside the same 90s timeout — so large diffs are the
+  specific case where Gemini `:high` risks timing out, not a general problem with the model.
+  Net: for a high-tier PR whose diff is already large, **both** entries in `LLM_MODELS_HIGH`
+  are now plausibly unable to complete, and the failure mode is worse than before (nothing
+  posted, vs. an empty review). This is an open problem, not yet fixed — the planned next step
+  is a third, higher-TPM free-tier provider (Cerebras, 30K TPM on the same `gpt-oss-120b`
+  model) as a second fallback behind Gemini `:high` and Groq `:medium`, tracked as follow-up
+  work rather than blocking this round's rubric/checklist/logging changes.
 
 ## Per-call observability
 
