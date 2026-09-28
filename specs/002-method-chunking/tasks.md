@@ -128,8 +128,8 @@ built on per-file queries.
 
 ## Phase 10: Polish
 
-- [ ] T039 [P] lambda: finalise research.md (R1 counts, R4 quota answer, R9 Groq answer, Gemini TPM ceiling) and tick checklists/requirements.md
-- [ ] T040 [P] lambda: README "Results" section: before/after table linked to baseline.md and after.md
+- [x] T039 [P] lambda: finalise research.md (R1 counts ✓, R4 quota answer ✓ in R16, Gemini limits ✓ in R15; **R9's Groq answer stays open until T036**) and tick checklists/requirements.md
+- [x] T040 [P] lambda: README "Results" section: before/after table linked to baseline.md and after.md (plus the Live demo before/after, the diagram and the known limitations)
 
 ---
 
