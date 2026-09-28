@@ -1,0 +1,241 @@
+# Research: Method-Level Chunking for RAG Context
+
+**Feature**: [spec.md](spec.md) · **Plan**: [plan.md](plan.md) · **Date**: 2026-09-28
+
+Each entry: **Decision**, **Rationale**, **Alternatives considered**. Entries marked
+*verify during implementation* name a check a task has to perform, because the answer
+cannot be settled by reading documentation.
+
+## R1. Java parser and chunk counts
+
+- **Decision**: `tree-sitter==0.26.0` + `tree-sitter-java==0.23.5`, pinned, installed in
+  `index-codebase.yml` with `pip install` (approved). Chunking walks
+  `class_declaration`, `record_declaration`, `interface_declaration` and `enum_declaration`
+  nodes, and chunks `method_declaration`, `constructor_declaration` and
+  `compact_constructor_declaration` children.
+- **Rationale**: javalang cannot parse Java 21 `record`. A probe during planning parsed all
+  14 `.java` files on codereview-app `develop@88801e4` (3 of them records) with zero
+  `ERROR` nodes. It also parsed all 25 files on `test/projects-module` (PR #8). Both
+  packages ship prebuilt wheels for CPython 3.12 on Linux, the runner's version, so no
+  compiler is needed.
+- **Trivial-method rule**: a method is trivial when its body is empty (`{}`), is a single
+  `return <field>;` / `return this.<field>;`, or is a single `this.<field> = <param>;`. A
+  constructor is trivial when every statement is `this.<field> = <param>;`. Compact record
+  constructors are never trivial.
+- **Counts under that rule** (planning probe):
+
+  | Commit | Java files | Methods + constructors | Non-trivial |
+  |---|---:|---:|---:|
+  | `develop@88801e4` | 14 | 38 | 34 |
+  | `test/projects-module@cf32768` | 25 | 112 | 100 |
+
+- **Reconciliation with the feasibility test's 59 chunks.** The feasibility script (since
+  deleted) ran while `README.md` was still indexed, and counted:
+
+  | Kind | Feasibility test | Now (`develop@88801e4`) |
+  |---|---:|---:|
+  | Java methods (non-trivial) | 35 | 34 (this rule) |
+  | Java files with no methods (records) → `type` chunks | 3 | 3 (`LoginRequest`, `LoginResponse`, `Task`) |
+  | Markdown sections | 8 | 0: `README.md` is no longer indexed |
+  | XML blocks (`pom.xml`) | 10 | to be counted by the dry run (T032) |
+  | YAML blocks (`application.yml`) | 3 | to be counted by the dry run (T032) |
+  | **Total** | **59** | ~50 expected (34 + 3 + ~13) |
+
+  The one-method difference fits a slightly different trivial rule, or a method removed
+  since then. It is too small to matter for sizing. **FR-003's reference is this rule**,
+  plus the counts the dry run (T032) prints on `develop`, recorded here when it runs. The
+  feasibility sizes (largest ~680 tokens, 9.4× batch speed-up) remain valid for planning.
+- **Alternatives**: javalang (no records); a regex-based splitter (breaks on nested types,
+  annotations, and lambdas with braces); running a JVM-based parser (JavaParser) on the
+  runner (a Java step in a Python script, for no gain over tree-sitter).
+
+## R2. Header (context prefix) format
+
+- **Decision**: the header is plain Java-shaped text: `package …;`, then for each enclosing
+  type from the outermost down, its declaration line up to `{` (annotations, modifiers,
+  `extends`/`implements`, record components), then that type's field declarations, one
+  per line, with initialisers kept only when they fit on one line. The header is stored
+  once per chunk (`header`) and embedded as `header + "\n" + text`.
+- **Rationale**: plain source reads naturally to both the embedding model and the reviewer
+  model, and repeating the header in every chunk is what makes a method understandable on
+  its own. Storing it separately lets the prompt print it once per file (FR-027) instead of
+  once per chunk.
+- **Alternatives**: imports in the header (noise that costs tokens and adds no meaning to a
+  method); a synthetic summary ("method X of class Y") (loses field types, which are what
+  make a method's code readable).
+
+## R3. Token estimation and split thresholds
+
+- **Decision**: one estimator on both sides: `ceil(len(text) / 3.0)`.
+  - Index side: split any chunk estimated above **1,800** tokens.
+  - Query side: split any per-file diff estimated above **1,800**, at hunk boundaries.
+  - Prompt budget: the same estimator (FR-025).
+- **Rationale**: measured on this codebase, gpt-oss (o200k) gives 4.12–4.36 chars/token and
+  Gemini's tokenizer about 3.4 (diffs; `baseline.md` §1). 3.0 is below every measured
+  ratio, so it never under-counts here. The worst real size of a chunk that passes the
+  1,800 check is about 1,590 embedding tokens, well inside 2,048.
+- **Alternatives**: `countTokens` API calls per chunk (one extra call per chunk, which
+  defeats batching); bundling a tokenizer in the Lambda (a new dependency and a larger zip,
+  and still the wrong tokenizer for two of the three providers).
+
+## R4. Batch embedding API
+
+- **Decision**: `POST {base}/models/gemini-embedding-001:batchEmbedContents` with
+  `{"requests": [{"model": "models/gemini-embedding-001", "content": {"parts": [{"text": …}]},
+  "taskType": "RETRIEVAL_DOCUMENT" | "RETRIEVAL_QUERY", "outputDimensionality": 768}, …]}`,
+  at most 100 requests per call. The response `embeddings[i].values` is aligned with
+  `requests[i]`. Both repos validate `len(embeddings) == len(requests)` and every vector's
+  length, and fail loudly otherwise.
+- **Rationale**: the feasibility test measured a 9.4× wall-clock gain. It also removes the
+  1 s pacing sleep per file.
+- **Quota accounting**: it is unknown whether a batch counts as 1 request or N against the
+  daily quota. *Verify during implementation*: record the AI Studio usage counter for
+  `gemini-embedding-001` before and after the first real v2 build, and write the result
+  here. The design is sized for the worst case (N): about 60 inputs per build, plus K per
+  review (one per changed file).
+- **Alternatives**: keep `embedContent` with parallel calls (hits the RPM limit, and no
+  quota benefit).
+
+## R5. Retry policy (index build)
+
+- **Decision**: retry on HTTP 429, HTTP 503, socket timeouts and `URLError`. Up to 5 attempts
+  per call, with a delay of `min(60, 2 * 2**attempt) + random(0, 1)` seconds. When the
+  response carries a `Retry-After` header, or a `google.rpc.RetryInfo.retryDelay` in the
+  error body (Gemini's 429 format), that value is used instead. A 5-minute ceiling covers
+  the whole build. Any other HTTP status fails immediately. On exhaustion, the build exits
+  non-zero before writing `index.json`, so the upload step never runs and the previous index
+  stays.
+- **Rationale**: 429 and 503 are the two statuses actually seen from Google's API in this
+  project (research 001). Fail-fast on 4xx keeps a wrong key or bad request from burning
+  five minutes.
+- **Alternatives**: retrying every 5xx (500 and 502 were never observed here; they can be
+  added later with evidence); retrying in the workflow YAML (it would re-run the whole build
+  and re-spend quota).
+
+## R6. Workflow concurrency
+
+- **Decision**:
+  ```yaml
+  concurrency:
+    group: index-codebase-${{ github.ref }}
+    cancel-in-progress: true
+  ```
+- **Rationale**: only the newest `develop` state matters. Cancelling an older run saves
+  quota, and the upload (`aws s3 cp`, a single PUT) is atomic, so a cancelled run never
+  leaves a half-written index.
+- **Alternatives**: `cancel-in-progress: false`, which queues runs. It is also correct, but
+  it spends a full build of quota on a commit that is already superseded.
+
+## R7. Query side: per-file diff splitting and fusion
+
+- **Decision**: split the diff on `^diff --git ` boundaries, one query per file. A file whose
+  section is estimated above 1,800 tokens is split at `@@` hunk boundaries into consecutive
+  parts, each prefixed with the file's `diff --git`/`---`/`+++` lines. A single hunk still
+  above the threshold is split by lines. All queries go in one `batchEmbedContents` call per
+  100. A chunk's score is `max(cosine(chunk, q) for q in queries)` (FR-019), and the log
+  records the argmax query's path.
+- **Rationale**: in the baseline, PR #8's largest single-file diff is 1,816 embedding tokens,
+  so per-file queries alone would already have covered it. Hunk splitting covers the
+  remaining tail. Max-fusion keeps any one strongly matching file from being averaged away
+  by the others.
+- **Alternatives**: mean of query vectors (dilution again: the problem being fixed);
+  reciprocal-rank fusion (better when score scales differ, but all queries here share one
+  model and task type, so cosine scores are directly comparable); a per-query top-k quota
+  (with 11 files and N=8 it degenerates to less than 1 chunk per file).
+
+## R8. Changed-line overlap (FR-020)
+
+- **Decision**: parse each hunk header `@@ -a,b +c,d @@` and walk its lines, tracking the
+  old-side line number. A line starting with `-` marks old line `n` as changed. An insertion
+  (a run of `+` lines with no `-` line immediately before it) marks the old-side position
+  where it lands: the line before it (n-1) and the line after (n). Context lines (` `) mark
+  nothing. A v2 chunk is excluded when `path` matches the diff's `a/` path and
+  `[startLine, endLine]` intersects the changed set. Renamed files use the `a/` (old) path;
+  new files (`--- /dev/null`) change nothing in the index.
+- **Rationale**: the index mirrors `develop`, so the pre-change side is where the index's
+  line numbers live. Marking both neighbours of an insertion catches an insertion at a
+  method's first or last line without guessing which side it belongs to.
+- **Index/merge-base drift**: the rule is exact only when the index `commit` is the PR's
+  merge base. RetrieveContext does not know the merge base; it logs the index `commit` so
+  the mismatch is visible after the fact. A mis-exclusion costs one context slot, never a
+  failure.
+- **Alternatives**: exclude whole changed files (rejected by the user: unchanged methods of
+  a changed class are useful context); a text match of the chunk against removed lines
+  (fragile with whitespace, and it misses insertions).
+
+## R9. Provider budgets and the Groq accounting question
+
+- **Decision**: prompt budgets per provider and effort live in `llm_router.py`, next to the
+  output caps they are derived from:
+
+  | Provider | Effort | Budget (estimated prompt tokens) | Derivation |
+  |---|---|---:|---|
+  | groq | medium | 4,300 | 8,000 TPM − 3,700 reserve (max measured output 3,668) |
+  | groq | low / none | 6,800 | 8,000 − 1,200 (max measured 1,073) |
+  | cerebras | any | 18,000 | 30,000 TPM − 12,000 `max_completion_tokens` |
+  | gemini | any | 100,000 | a ceiling well under the 1M context window; *verify during implementation* against the current free-tier TPM for `gemini-3.5-flash` |
+
+  Context cap: 3,000 estimated tokens, for all providers.
+- **Groq's accounting is not a strict pre-flight on `prompt + max_completion_tokens`.**
+  The baseline's PR #7 review (2026-09-28, `7df059d3`) was answered by Groq at `medium`
+  with 3,258 prompt tokens and `max_completion_tokens: 5,500`: **8,758 reserved, and
+  accepted.** `llm_router.py` also records 8,294 accepted (a 2,794-token prompt). Research
+  001's two 413s (8,249 and 8,283 "requested") came from PR #8, whose prompt alone was
+  ~7,000 tokens. The reading consistent with all three data points: the limit is charged
+  on something closer to actual usage (prompt + output actually generated, possibly within
+  a rolling minute), not on the reservation. The "pre-flight" description in research 001
+  is therefore not reliable.
+- **Decision: keep 4,300 as the starting point**, and let T036 decide with measurements.
+  Send prompts of increasing estimated size (e.g. 3,500 / 4,300 / 5,000) at `medium` and
+  record, for each, the prompt tokens, the output tokens and whether it was accepted. Note
+  that with the 3.0 estimator, 4,300 estimated is only about 3,300 real gpt-oss tokens.
+- **Why the Groq budget must not be set too low: Cerebras allows 5 requests per minute.**
+  Every attempt Groq skips (FR-024) goes to Cerebras, the next entry in the medium tier and
+  the second in the high tier. Cerebras' free tier is 5 RPM (research 001, "Cerebras as a
+  third fallback provider"). A conservative Groq budget would route most medium-tier
+  reviews to Cerebras. A handful of PRs pushed in the same minute, plus Step Functions'
+  retries, would then exhaust Cerebras and push reviews on to Gemini `:low`, the last and
+  weakest medium-tier entry, or fail them. The budget is a trade-off: too high costs one
+  fast 413 from Groq; too low moves load onto the provider with the smallest request
+  rate. T036 records how many of the three measured PRs would be skipped on Groq at the
+  chosen value.
+- **Rationale**: these numbers restate limits already measured in research 001. The budget
+  only decides how much *context* to include, and a too-generous Groq budget costs at most
+  one fast 413 before falling back, which is today's behaviour.
+- **Alternatives**: one global budget (would starve Cerebras and Gemini to fit Groq);
+  measuring provider tokens with a live `countTokens` call per attempt (latency, and no such
+  endpoint on Groq).
+
+## R10. Over-budget handling inside the router (FR-024)
+
+- **Decision**: `MultiProviderLlmRouter.generate_review` builds the prompt per attempt:
+  `pack_context(chunks, budget − estimate(instructions + diff))`. If the remaining room is
+  below zero, it logs `Skipping <label> for PR <n>: estimated prompt <e> > budget <b>` and
+  continues without calling the client. At exhaustion, if every entry was skipped, it
+  raises `LlmPromptTooLargeError(LlmRouterError)`, which is non-retryable. Otherwise the
+  existing classification applies, and skips count as neither "model gone" nor transient.
+- **Rationale**: a new subclass of `LlmRouterError` (not of `LlmTransientError`) keeps
+  Step Functions from retrying a run that can never fit. Its class name is new, so nothing
+  in codereview-infra's Retry matcher changes.
+- **Alternatives**: treating a skip as transient (Step Functions would retry a hopeless
+  run); trimming the diff (out of scope in the spec).
+
+## R11. Step Functions payload size
+
+- **Decision**: no change needed. With N=8 and chunks capped at about 1,800 estimated tokens
+  (5,400 chars), the worst-case `context` is about 8 × (5.4 KB text + ~1 KB header +
+  metadata), roughly 55 KB, plus the event, well under the 256 KB state payload limit.
+  Vectors are never passed between states.
+
+## R12. Where tests for the index script run
+
+- **Decision**: add `scripts/tests/` (stdlib `unittest`, plus tree-sitter) and a new workflow,
+  `.github/workflows/index-script-tests.yml`, on `pull_request` with `paths: [scripts/**,
+  .github/workflows/index-*.yml]`.
+- **Rationale**: `pr-checks.yml` is the review-trigger workflow, and CLAUDE.md fences its
+  `trigger-review` job. A separate workflow avoids touching it, and the path filter keeps
+  it off Java-only PRs. It is not added to branch protection's required checks (only `test`
+  gates merging), matching the repo's current policy.
+- **Alternatives**: running the tests inside `index-codebase.yml` (too late: only after
+  merge); adding a job to `pr-checks.yml` (widens a workflow whose scope CLAUDE.md
+  deliberately keeps narrow).
