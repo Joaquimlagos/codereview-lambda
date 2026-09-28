@@ -344,9 +344,11 @@ replace the estimates used earlier in this file and in research 001 for Google's
 | Model | RPM | TPM | RPD | Observed |
 |---|---:|---:|---:|---|
 | `gemini-embedding-001` | 100 | 30,000 | 1,000 | 28-day peak **33.55K TPM**, above the limit |
-| Gemini 3.5 Flash (`gemini-3.5-flash`) | 5 | 250,000 | **20** | **21 of 20** requests used on 2026-09-28 |
+| Gemini 3.5 Flash (`gemini-3.5-flash`) | 5 | 250,000 | **20** | 28-day peak **21 of 20** requests in one day; **8 of 20** on the last day (1-day view) |
 
-- **The page shows 28-day peaks, not daily totals.** Any before/after comparison of usage
+- **The page's default view shows 28-day peaks, not the current day.** The "21 of 20" first
+  recorded here as 2026-09-28's usage was the peak of one day within those 28 days. With the
+  1-day interval, the page shows 8 of 20 for the last day. Any before/after comparison of usage
   (T035) must use the per-day chart, not these peak figures.
 - **Embedding TPM is the binding limit for the index build.** The 33.55K peak shows the
   30,000 TPM limit has already been exceeded, at least momentarily. The build's retry on
@@ -357,12 +359,41 @@ replace the estimates used earlier in this file and in research 001 for Google's
 - **The review-time query side is far below the limits**: one batch call per review, one
   input per changed file. PR #8's 11 files are about 8,000 embedding tokens (baseline.md §2).
 - **Gemini 3.5 Flash's 20 RPD is the scarcest resource in the pipeline**, and the high
-  tier leads with it; consequences in R14. The 21/20 on 2026-09-28 came from that day's
-  high-tier reviews (every PR #3 and #8 run tries Gemini first), possibly plus the
-  measurement script's `countTokens` calls on `gemini-3.5-flash`. Whether `countTokens`
+  tier leads with it; consequences in R14. The quota has already been exceeded on at least
+  one day in the last 28 (peak 21 of 20); the last day used 8. Every PR #3 and #8 run tries
+  Gemini first, so each high-tier review costs one of the 20 whether it answers or not. Whether `countTokens`
   counts against RPD is not known, which is another reason to keep keyed measurement runs
   to one per PR (baseline.md, step 4).
 - The research-001 budget ceiling for Gemini (100,000 estimated prompt tokens, R9) stays
   under its 250,000 TPM, so the budget table needs no change for Gemini's TPM. RPD, not
   TPM, is what limits Gemini.
+
+## R16. Switch-over check: index version 2 published (T035)
+
+- **Build**: codereview-app PR #16 merged into `develop` (`5a0eb9b`). `index-codebase`
+  run #7 (9 s) installed `tree-sitter 0.25.2` and logged `41 chunks: 34 method, 4 type,
+  3 block; 0 split into parts; largest 361 estimated tokens`, then `Embedded with 1 call(s),
+  0 retr(y/ies)` and `Wrote index.json (version 2) with 41 chunks`. It uploaded at
+  2026-09-28T20:03:46Z (S3 version `8oFWxwzN9wuEFdBcxzpBXFCqTl7c8fYt`, 461,253 bytes). The
+  counts match the dry run recorded in R1, and this is also the first Linux run of the
+  pinned tree-sitter.
+- **Contract check**: the published object was checked against contracts/index-v2.md.
+  Top-level fields are exactly the contract's: `version: 2`, `branch: develop`, `commit`
+  equal to `develop`'s `5a0eb9b…`, `gemini-embedding-001`, 768. All 41 ids are unique and
+  start with their `path`. Method and type ids end with their line range, block ids are
+  `#L<start>-<end>`, and `symbol` matches `kind`. Every chunk has non-empty `text` and no
+  `part`. Every vector has 768 floats, is non-zero, and all 41 are distinct. No embedded
+  input is over the 1,800-token split threshold. **All checks passed.**
+- **Read by the deployed Lambda code, offline** (no embedding call): `_index_version` returns
+  2. `ranking.rank` with one chunk's own vector as the query ranks that chunk first at
+  1.0000 and selects 8 of 41. The pre-002 v1 ranking (`_top_chunks`) also reads the index
+  without error, which confirms the reversed-deploy-order safety net on the real object.
+- **Rollback** is available: the previous v1 object is kept as S3 version
+  `Gbq3QxTKViw51IFuKCo5BwzgPQs_zodO` (contracts/index-v2.md, "Rollback").
+- **Quota accounting (R4)**, from the AI Studio daily view of `gemini-embedding-001`
+  requests (RPD column, 1-day interval): **27 before the merge**; after the merge:
+  *pending, AI Studio refreshes 15–30 min later*. A rise of ~1 means a batch counts as one
+  request, ~41 means one per input. The last review before the merge was PR #16's own
+  (execution `25ae08de`, 19:27Z, one v1 query embedding), and none ran after it, so if the
+  "before" reading was taken after 19:28Z, the difference is the build alone.
 

@@ -111,8 +111,8 @@ built on per-file queries.
 - [x] T031 [P] [US2] app: new `.github/workflows/index-script-tests.yml` (on `pull_request`, paths `scripts/**` and `.github/workflows/index-*.yml`), running `python -m unittest discover -s scripts/tests` (research R12)
 - [x] T032 [US2] app: `python scripts/build_index.py --dry-run` on `develop`'s tree; write the counts by kind into lambda `research.md` R1 as FR-003's reference
 - [x] T033 [US2] app: `CLAUDE.md`: index contract → v2 (link to lambda's contracts/index-v2.md), "one chunk per file" → method chunking, the stdlib-only paragraph → the approved pinned exception, the concurrency group; `README.md`, if it describes the index
-- [ ] T034 🔒 app: push `feat/method-chunking`, open a PR → **`develop`** (its own review still runs on the v1 index, as expected)
-- [ ] T035 🔒 app: before merging, note the day's value in the **daily chart** of `gemini-embedding-001` requests in AI Studio (the rate-limit page shows 28-day peaks, research R15, so it cannot be used); merge; confirm `index-codebase` logs 1 call and 0 retries; confirm the S3 object is `version 2`; record the counter again → research R4 (1 or N per batch) (user-assisted: AI Studio is a UI)
+- [x] T034 🔒 app: push `feat/method-chunking`, open a PR → **`develop`** (its own review still runs on the v1 index, as expected)
+- [x] T035 🔒 app: before merging, note the day's value in the **daily chart** of `gemini-embedding-001` requests in AI Studio (the rate-limit page shows 28-day peaks, research R15, so it cannot be used); merge; confirm `index-codebase` logs 1 call and 0 retries; confirm the S3 object is `version 2`; record the counter again → research R4 (1 or N per batch) (user-assisted: AI Studio is a UI)
 
 **Checkpoint**: v2 is live; rollback = restore the previous S3 object version (contracts/index-v2.md).
 
