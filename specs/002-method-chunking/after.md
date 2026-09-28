@@ -9,6 +9,27 @@ This file follows baseline.md's procedure, unchanged: 3 runs per PR, triggered o
 60 s apart with [trigger_runs.py](trigger_runs.py), and measured with
 [measure_review.py](measure_review.py).
 
+## Conclusion
+
+**Method chunking improved what reaches the model, and kept review quality where it was.**
+
+- **The whole diff is queried.** PR #8's retrieval went from seeing 26% of its diff to one
+  query for each of its 11 changed files.
+- **Zero redundancy.** No retrieved chunk repeats code the diff changes, against 3 of 3
+  retrieved files before on PRs #3 and #7.
+- **A smaller context.** On PR #7 the context is 40% smaller (1,212 → 727 tokens) and the
+  whole prompt 15% smaller. No model attempt went over its budget.
+- **Review quality held.** PR #7 and PR #8 had exactly the same comment counts (1.33 and
+  1.00). PR #3's planted defects went from 2.67 to 3.33 of 5 on average, and the whole
+  difference is one defect: user enumeration, caught in 3 of 3 runs instead of 1 of 3.
+  That is a **positive signal, not a conclusive one**: with 3 runs per side it sits below
+  the ~1-defect threshold baseline.md set for this sample size, and the other four defects
+  kept exactly the same rates.
+- **SC-012 was not met.** Method chunks do not separate relevant from irrelevant context
+  more sharply by score than whole files did: the standardised gap went 1.78 / 1.93 / 1.78
+  → 2.12 / 1.72 / 1.37, and the margin at the cut is still about 0.001. It is recorded as
+  is.
+
 ## Configuration under test
 
 | Component | Value |
