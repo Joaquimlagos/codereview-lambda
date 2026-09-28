@@ -401,6 +401,40 @@ in `LLM_MODELS_*`, and Gemma is out. Kept for the measurements and reasoning tha
   pipeline degrades correctly when this happens; the raised cap only lowers the probability of
   the failure, it does not eliminate it the way it might appear to from the `high`-only framing
   above.
+- **Token budget of the rubric and security checklist, measured against #7/#8/#13**: the
+  review-quality rubric and the security checklist (both above) add to every Groq prompt, so
+  they were measured against `gpt-oss-120b`'s own tokenizer (`o200k_harmony`) to check they
+  don't push a typical PR over the 8,000 TPM free-tier limit:
+
+  | Piece | Tokens |
+  |---|---|
+  | Base instructions (JSON shape + line-number rules), no rubric | 269 |
+  | + rubric | 525 (rubric alone: **256**) |
+  | + security checklist (gated on an auth/security-sensitive path) | 688 (checklist alone: **163**) |
+
+  | PR | Raw diff tokens (`gh pr diff`, gpt-oss tokenizer) | Touches an auth/security path? |
+  |---|---|---|
+  | `codereview-app` #7 | 1,461 | No |
+  | `codereview-app` #8 | 6,531 | No |
+  | `codereview-app` #13 | 1,298 | No |
+
+  None of these three touch `auth/`, so the checklist's 163 tokens never actually apply to any
+  of them today — it only adds cost on a future PR that touches that module.
+- **Conclusion: no dynamic output cap — the free tier doesn't have room, and Cerebras is the
+  real fix**: a `max_completion_tokens = 8000 - prompt_tokens - margin` cap was considered as a
+  response to the medium-effort failure above, and rejected. For PR #13's actual 2,531-token
+  prompt it computes to roughly 5,300 — nearly identical to the current fixed 5,500 — so it
+  would not have prevented that failure. For a larger prompt it computes to *less* headroom for
+  reasoning, which makes the same runaway-reasoning failure more frequent, not less; all it
+  changes is trading an immediate 413 for an empty response several seconds later. The
+  underlying problem is that Groq's free-tier 8,000 TPM ceiling simply does not have room for
+  prompt + reasoning + answer on medium-to-large PRs (#8's 6,531-token diff alone leaves under
+  1,500 tokens for reasoning and answer combined, before the checklist or a rubric-sized
+  addition is even counted). `LlmOutputTruncatedError`'s existing move-to-next-model fallback
+  already covers this for now; the structural fix is a third provider with a larger quota
+  (Cerebras, 30K TPM on the same `gpt-oss-120b` model — already proposed, not yet implemented,
+  in "High-tier reasoning: why Gemini, not Groq" above), not a smaller, prompt-dependent cap on
+  the provider that's already too tight.
 - **Error handling**: HTTP 404, and Groq's `model_not_found`/`model_decommissioned` codes
   (which Groq can send with HTTP 400), raise `LlmModelNotFoundError`, and the router moves to
   the next entry: providers remove free-tier models without notice. If every entry is gone,
