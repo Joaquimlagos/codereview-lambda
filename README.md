@@ -191,29 +191,26 @@ Free-tier availability varies a lot between models; see
 `specs/001-pr-review-pipeline/research.md`'s "Multi-provider model fallback" and "Cerebras as
 a third fallback provider" decisions for the measurements behind the current lists.
 
-**The high tier gets a genuinely different configuration, not just the same one twice — and
-runs it first, not as a rarely-reached fallback.** `LLM_MODELS_HIGH` leads with Gemini at
-`thinkingLevel: "high"`, then falls back to Cerebras at `medium`, then Groq at `medium`.
-Leading with Groq (as low and medium do) would leave the deeper Gemini pass almost never
-reached in practice, since Groq's `medium` attempt succeeds most of the time — making the
-high tier behave like medium's config despite being configured differently. Gemini `high`
-measured 6 inline comments vs. 2 at `low` on the same real prompt; Groq `medium` is a
-fallback, not the lead, because `high` effort on Groq reliably exhausts its output budget on
-reasoning alone and returns nothing (tested directly). Cerebras sits between Gemini and Groq
-in this tier specifically because a large diff can exhaust both of the others at once: Gemini
-`high` risks its 90 s read timeout on a large prompt (measured 84.7 s on a small ~600-token
-diff; a ~6,500-token diff timed out entirely in production), and Groq's 8,000 TPM ceiling
-rejects that same large diff outright — Cerebras' 30,000 TPM ceiling covers exactly that gap.
-The `high` Gemini call is also much slower than low/medium reasoning (measured up to 63 s vs.
-9–31 s at `low`), so it gets its own longer timeout, and with three fallback attempts instead
-of two the Lambda's overall timeout is 230 s rather than 180 s. This only changes
-`invoke-llm`'s own Lambda timeout, not `codereview-infra`'s Step Functions `Retry` (still
-`MaxAttempts: 1`, `IntervalSeconds: 30`): the worst case for a full review attempt is two
-230 s Lambda executions (the original attempt, then the one Step Functions retry) plus the
-30 s interval between them, roughly `2 × 230 s + 30 s ≈ 490 s` (about 8.2 minutes) before the
-step gives up and surfaces the failure — still fine for a non-blocking advisory check. See
-research.md's "High-tier reasoning: why Gemini, not Groq" and "Cerebras as a third fallback
-provider".
+**The high tier leads with Cerebras, and keeps Gemini `high` only as the last resort.**
+`LLM_MODELS_HIGH` is Cerebras at `medium`, then Groq at `medium`, then Gemini at
+`thinkingLevel: "high"`. Gemini `high` used to lead this tier, because it was the deeper
+reasoning pass (6 inline comments vs. 2 at `low` on the same prompt). But it returned HTTP
+503 on 12 of 12 measured high-tier reviews, each attempt costing a median 5.5 s and one of
+its 20 free requests per day, so every review was really answered by the Cerebras fallback
+anyway. Cerebras at `high` effort was tested on the real prompts: it spent its whole
+12,000-token output budget on reasoning without answering, 4 of 4 times.
+
+**The cost is explicit: in practice the high tier now runs the same model (`gpt-oss-120b`)
+and reasoning effort (`medium`) as the medium tier**, only with Cerebras first. The
+complexity classification still sets the fallback order and the time budget, but no longer
+changes who answers.
+
+Gemini `high` keeps its own longer timeout (90 s read, 95 s attempt budget). The worst case,
+all three attempts failing, is 50 + 50 + 95 = 195 s, inside the Lambda's 230 s. With Step
+Functions' one retry (`MaxAttempts: 1`, `IntervalSeconds: 30` in `codereview-infra`), the
+worst case for a full review is about `2 × 230 s + 30 s ≈ 490 s` (8.2 minutes) before the
+failure surfaces, which is fine for a non-blocking advisory check. See research.md's "High
+tier: Cerebras first, Gemini last".
 
 ## Review quality
 
