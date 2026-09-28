@@ -301,3 +301,22 @@ cannot be settled by reading documentation.
 - **Side finding**: the `llm_attempt` line exposed the estimate/real-token mismatch
   recorded in R9.
 
+
+## R14. The high tier is answered by Cerebras in practice
+
+- **Observation**: `LLM_MODELS_HIGH` leads with `gemini:gemini-3.5-flash:high`, but Gemini
+  returned **HTTP 503** ("high demand") on **all six** high-tier runs of the baseline (PR #3:
+  `209bc841`, `7ad12e48`, `cf840128`; PR #8: `ea864ec9`, `6c549856`, `840e2f46`;
+  2026-09-28). Every one fell back to the second entry, `cerebras:gpt-oss-120b:medium`,
+  which answered. So in practice the high tier today is Cerebras gpt-oss-120b at `medium`,
+  not Gemini at `high`. Research 001's comparison (6 comments at Gemini `:high` vs. 2 at
+  `:low` on the same prompt) describes a model that is not currently answering.
+- **Cost of the current order**: each high-tier review spends one Gemini call (a fast 503,
+  seconds, not the 90 s read timeout) before reaching the model that answers.
+- **Decision: do not change the order now.** Re-evaluate the high tier's order only
+  **after** the method-chunking "after" measurement (T038). Changing the model list now
+  would change two variables at once, retrieval and the answering model, and the
+  before/after comparison would no longer isolate the effect of chunking. The baseline and
+  the "after" measurement both run with the order as configured today. baseline.md's rule
+  (an "after" run answered by a different model than its PR's baseline runs is
+  re-triggered) keeps the comparison on the same model even if Gemini recovers in between.
