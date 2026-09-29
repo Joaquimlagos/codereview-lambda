@@ -1,30 +1,27 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 1.1.1 → 1.2.0
-Rationale: Principle III required generation to use only Gemini free-tier models. In
-practice, Gemini's free tier returned 503 "high demand" often enough to fail whole runs,
-and a latency diagnosis on a real review prompt showed long, unpredictable delays. The
-pipeline now falls back across providers (Gemini and Groq) within each complexity tier.
-The principle is rewritten around what it is actually protecting — free-tier-only
-generation, three complexity tiers, selection inside InvokeLLM, no routing service — without
-naming providers or models; the concrete providers, models and measurements live in
-specs/001-pr-review-pipeline/research.md ("Multi-provider model fallback") and the
-LLM_MODELS_* config. Treated as MINOR: the set of allowed generation sources is materially
-expanded (any free-tier provider, not only Gemini), while every existing obligation
-(free tier only, no paid-tier calls, Jev for structured decisions) is kept.
+Version change: 1.2.0 → 2.0.0
+Rationale: Principle V required the full pipeline to be runnable and testable locally via
+LocalStack. In practice the pipeline runs directly on AWS (infra/provider.tf has no
+LocalStack endpoints), and the test suite, locally and in CI, runs entirely against the
+local stubs required by Principle IV — no LocalStack container is involved. Recent
+LocalStack images also refuse to start without a paid license token, even for S3/SSM. The
+principle is rewritten around what it protects: validating a change without real cloud
+resources, credentials or network. Treated as MAJOR: the principle is redefined and the
+LocalStack obligation is removed.
 
 Modified principles:
-- III. Cost-Conscious Model Usage — "three Gemini free-tier models, one per complexity
-  tier" → "three complexity tiers, each served by free-tier models, with fallback across
-  providers".
+- V. Local Testability via LocalStack → V. Local Testability via Stubs.
 
 Added sections: none
 Removed sections: none
 
 Other changes:
-- Technology Constraints' LLM-generation bullet reworded to match.
-- Development Workflow: "generative Gemini calls" → "generative LLM calls".
+- Principle IV's rationale: "LocalStack-based testing" → "stub-based testing".
+- Technology Constraints' local/dev bullet reworded to match.
+- Technology Constraints' storage bullet: secrets live in Secrets Manager, not SSM; SSM
+  Parameter Store holds configuration only (resource ARNs and names).
 
 Follow-up TODOs: none.
 -->
@@ -78,19 +75,23 @@ interface/abstraction. Handlers MUST NOT call external SDKs or HTTP clients
 directly. Each abstraction MUST support a local stub/fake implementation that
 requires no network access and no real credentials.
 
-Rationale: This is what makes local development and LocalStack-based testing
+Rationale: This is what makes local development and stub-based testing
 possible without depending on live AWS infrastructure or third-party quotas,
 and keeps handler code focused on orchestration logic rather than integration
 plumbing.
 
-### V. Local Testability via LocalStack
-The full pipeline MUST be runnable and testable locally via LocalStack,
-without requiring real AWS infrastructure. Any AWS service used by a Lambda
-(S3, SSM, Step Functions, etc.) MUST have a documented LocalStack-compatible
-setup path.
+### V. Local Testability via Stubs
+Every Lambda handler and every external integration MUST be testable locally
+without network access, credentials, or real AWS infrastructure, through the
+local stubs required by Principle IV. The test suite, locally and in CI, MUST
+run entirely against those stubs. The deployed pipeline runs directly on AWS;
+no LocalStack setup is required or maintained.
 
 Rationale: Fast local iteration and CI runs must not depend on provisioning
-real cloud resources or incurring AWS costs just to validate a change.
+real cloud resources or incurring AWS costs just to validate a change. The
+pipeline was first planned around LocalStack, but it is deployed directly to
+AWS and its tests already run on stubs, which give the same isolation without
+a container or a license.
 
 ### VI. Portfolio-Grade Clarity Over Premature Optimization
 Code and documentation MUST be written to clearly communicate intent to a
@@ -107,8 +108,8 @@ marginal performance gains that add complexity.
 - LLM generation: three complexity tiers, each served by free-tier models with fallback across providers, called directly from the InvokeLLM Lambda, which performs the complexity-tier → model selection and the fallback itself — no paid-tier model calls, no separate routing service.
 - Structured decisioning (routing, RAG-necessity): Jev (TypeSafe AI), not a generative LLM call.
 - Orchestration: AWS Step Functions, with one Lambda per state as required by Principle II.
-- Storage/context: S3 for RAG context artifacts; SSM for configuration and secrets — both accessed only through the abstractions required by Principle IV.
-- Local/dev environment: LocalStack MUST be able to stand in for all AWS services the pipeline touches.
+- Storage/context: S3 for RAG context artifacts; SSM Parameter Store for configuration (resource ARNs and names); Secrets Manager for API keys and the GitHub App private key — all accessed only through the abstractions required by Principle IV.
+- Local/dev environment: local stubs (Principle IV) stand in for every AWS service and external API in tests; deployment targets real AWS.
 
 ## Development Workflow
 
@@ -133,4 +134,4 @@ constitution. Any deviation must be justified in the relevant plan/PR
 description; unjustified complexity or violations of Principles I–VI should
 be flagged in review.
 
-**Version**: 1.2.0 | **Ratified**: 2026-09-18 | **Last Amended**: 2026-09-24
+**Version**: 2.0.0 | **Ratified**: 2026-09-18 | **Last Amended**: 2026-09-28
