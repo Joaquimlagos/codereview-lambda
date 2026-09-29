@@ -4,7 +4,14 @@ Never touches S3/the diff body — the "state" sent to Jev is built entirely fro
 lightweight stats already on the incoming event (files_changed/lines_added/lines_removed/
 paths). Reading the actual diff only happens later, in RetrieveContext, and only if Jev's
 needsContext answer comes back true.
+
+Each run logs one JSON `route_decision` line: the decision, whether it came from Jev or the
+fallback, and how long the Jev call took.
 """
+
+import json
+import logging
+import time
 
 from contracts.models import Complexity, PullRequestEvent, RoutingDecision
 from integrations.config import require_env
@@ -15,6 +22,8 @@ from integrations.secrets import resolve_api_key
 # Raises this project's own loggers to INFO (root logger and third-party loggers
 # untouched) — see integrations/logging_config.py.
 configure_project_logging()
+
+logger = logging.getLogger(__name__)
 
 # Fixed fallback when Jev is unavailable/invalid, so the run still reaches a terminal outcome
 # (spec.md Assumptions; SC-005) — a whole-pipeline concern, not User Story 2's. Field name is
@@ -42,6 +51,8 @@ def route_model(event: dict, decision_engine: DecisionEngine | None = None) -> d
     pr_event = PullRequestEvent.model_validate(event)
     decision_engine = decision_engine or _default_decision_engine()
 
+    error = None
+    started = time.monotonic()
     try:
         decision = decision_engine.classify(
             files_changed=pr_event.files_changed,
@@ -49,10 +60,33 @@ def route_model(event: dict, decision_engine: DecisionEngine | None = None) -> d
             lines_removed=pr_event.lines_removed,
             paths=pr_event.paths,
         )
-    except DecisionEngineError:
+    except DecisionEngineError as exc:
         decision = FALLBACK_DECISION
+        error = exc
+    jev_ms = round((time.monotonic() - started) * 1000)
 
+    _log_decision(pr_event.pr_number, decision, jev_ms, error)
     return decision.model_dump()
+
+
+def _log_decision(
+    pr_number: int, decision: RoutingDecision, jev_ms: int, error: DecisionEngineError | None
+) -> None:
+    """One machine-readable line per run. On a fallback, `error` is only the underlying
+    exception's class name — never its message, the paths sent to Jev, or the key."""
+    logger.info(
+        json.dumps(
+            {
+                "event": "route_decision",
+                "pr": pr_number,
+                "tier": decision.complexity.value,
+                "needs_context": decision.needsContext,
+                "source": "jev" if error is None else "fallback",
+                "jev_ms": jev_ms,
+                "error": None if error is None else type(error.__cause__ or error).__name__,
+            }
+        )
+    )
 
 
 def handler(event: dict, context=None) -> dict:
