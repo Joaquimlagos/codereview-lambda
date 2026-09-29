@@ -1,5 +1,9 @@
 # Feature Specification: AI PR Review Pipeline
 
+> **Historical record.** This spec records the decisions as they were made and is not
+> updated as the code changes. For the current state of the pipeline, see the
+> [README](../../README.md).
+
 **Feature Branch**: `001-pr-review-pipeline`
 
 **Created**: 2026-09-18
