@@ -11,7 +11,16 @@ integrations/github.py).
 
 Posts as a GitHub App installation, so the review appears as the App's bot account rather
 than as whoever owns a personal access token (see research.md, "GitHub App authentication").
+
+When the state machine passes the execution's start time (`timing.startTime`, added by
+codereview-infra's RecordStartTime Pass state), a posted review also logs one JSON
+`review_posted` line with the time from the start of the execution to the post. Without it,
+nothing is logged and the review is posted the same way.
 """
+
+import json
+import logging
+from datetime import UTC, datetime
 
 from contracts.models import GeneratedReview
 from integrations.config import require_env
@@ -22,6 +31,8 @@ from integrations.secrets import resolve_secret_file
 # Raises this project's own loggers to INFO (root logger and third-party loggers
 # untouched) — see integrations/logging_config.py.
 configure_project_logging()
+
+logger = logging.getLogger(__name__)
 
 # App ID and installation ID are identifiers, not secrets: plain env vars (FR-009).
 GITHUB_APP_ID_ENV = "GITHUB_APP_ID"
@@ -68,7 +79,34 @@ def post_comment(event: dict, github_client: GitHubClient | None = None) -> dict
         summary=review.summary,
         comments=review.comments,
     )
+    _log_review_posted(event, review, github_client.used_plain_comment_fallback)
     return comment.model_dump()
+
+
+def _log_review_posted(event: dict, review: GeneratedReview, fell_back_to_comment: bool) -> None:
+    """One machine-readable line per posted review, only when `timing.startTime` is present
+    and parses. Counts and timings only: never the summary or a comment's text."""
+    start_time = (event.get("timing") or {}).get("startTime")
+    if not isinstance(start_time, str):
+        return
+    try:
+        started = datetime.fromisoformat(start_time)
+    except ValueError:
+        return
+    if started.tzinfo is None:
+        return
+    elapsed_ms = round((datetime.now(UTC) - started).total_seconds() * 1000)
+    logger.info(
+        json.dumps(
+            {
+                "event": "review_posted",
+                "pr": int(review.pr_id) if review.pr_id.isdigit() else review.pr_id,
+                "comments": len(review.comments),
+                "fallback_422": fell_back_to_comment,
+                "elapsed_ms": elapsed_ms,
+            }
+        )
+    )
 
 
 def handler(event: dict, context=None) -> dict:

@@ -360,9 +360,10 @@ extract the fields with `parse`.
 | `rag_chunk` | RetrieveContext, once per selected chunk | `pr`, `rank`, `id`, `score`, `matched_query` |
 | `llm_attempt` | InvokeLLM, before each attempt | `pr`, `model`, `budget`, `estimated_prompt`, `context_chunks_kept`/`dropped`, `skipped` |
 | `llm_call` | InvokeLLM, after each call that reached a provider | `pr`, `tier`, `model`, `attempt`, `fell_back`, `outcome` (`ok`, `transient`, `truncated`, `model_not_found`, `permanent`), `http_status`, `llm_ms`, `finish_reason`, `prompt_tokens`, `output_tokens` (reasoning included), `reasoning_tokens` |
+| `review_posted` | PostComment, once per posted review, only when the state machine passes `timing.startTime` | `pr`, `comments`, `fallback_422` (posted as one plain comment after a 422), `elapsed_ms` (from the start of the execution) |
 
-These lines carry identifiers, counts and timings only: never the prompt, the diff, a
-provider's error body or a key (`tests/unit/test_structured_logs.py` checks this). The
+These lines carry identifiers, counts and timings only: never the prompt, the diff, the
+review's text, a provider's error body or a key (`tests/unit/test_structured_logs.py` checks this). The
 plain-text `… answered: … usage=…` and `Model … failed for PR …` lines are kept unchanged,
 because `specs/002-method-chunking/measure_review.py` parses them.
 

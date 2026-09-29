@@ -1,4 +1,5 @@
-"""The JSON log lines the CloudWatch dashboard reads (`llm_call`, `route_decision`):
+"""The JSON log lines the CloudWatch dashboard reads (`llm_call`, `route_decision`,
+`review_posted`):
 
 - their fields, including every `llm_call` outcome and the normalised token counts;
 - that they never carry the prompt, the diff, a provider's error body, or a key;
@@ -6,12 +7,14 @@
 """
 
 import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import requests
 
 from contracts.models import Complexity
 from integrations.decision_engine import DecisionEngine, DecisionEngineError, JevDecisionEngine
+from integrations.github import RestGitHubClient
 from integrations.llm_router import (
     CerebrasClient,
     GeminiClient,
@@ -20,6 +23,7 @@ from integrations.llm_router import (
     LlmTransientError,
     MultiProviderLlmRouter,
 )
+from post_comment.handler import post_comment
 from route_model.handler import route_model
 
 REVIEW_JSON = json.dumps({"summary": "Adds logging.", "comments": []})
@@ -35,6 +39,10 @@ class FakeResponse:
 
     def json(self):
         return self._body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}")
 
 
 class FakeSession:
@@ -284,6 +292,99 @@ def test_new_lines_never_contain_prompt_diff_error_body_or_key(monkeypatch, pr_e
     for line in lines:
         for forbidden in (DIFF_MARKER, SECRET_KEY, "Bearer", "x-goog-api-key", "You are reviewing"):
             assert forbidden not in line
+
+
+# --- review_posted -----------------------------------------------------------------------
+
+SUMMARY_MARKER = "SENTINEL_SUMMARY_do_not_log"
+COMMENT_MARKER = "SENTINEL_COMMENT_do_not_log"
+
+
+def _post_event(pr_event: dict, timing: dict | None = None, line: int = 5) -> dict:
+    event = {
+        **pr_event,
+        "analysis": {
+            "pr_id": str(pr_event["prNumber"]),
+            "summary": f"Summary {SUMMARY_MARKER}.",
+            "comments": [
+                {
+                    "path": "src/app.py",
+                    "line": line,
+                    "body": f"Comment {COMMENT_MARKER}.",
+                    "category": "bug",
+                    "severity": "medium",
+                }
+            ],
+            "model_used": "groq:openai/gpt-oss-120b:medium",
+        },
+    }
+    if timing is not None:
+        event["timing"] = timing
+    return event
+
+
+def _seconds_ago(seconds: float) -> str:
+    started = datetime.now(UTC) - timedelta(seconds=seconds)
+    return started.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def test_review_posted_has_every_field(pr_event, stub_github_client, caplog):
+    event = _post_event(pr_event, timing={"startTime": _seconds_ago(12)})
+
+    with caplog.at_level("INFO"):
+        post_comment(event, github_client=stub_github_client)
+
+    [line] = _events(caplog, "review_posted")
+    assert line == {
+        "event": "review_posted",
+        "pr": pr_event["prNumber"],
+        "comments": 1,
+        "fallback_422": False,
+        "elapsed_ms": line["elapsed_ms"],
+    }
+    assert 12_000 <= line["elapsed_ms"] < 60_000
+
+
+def test_review_posted_reports_the_422_fallback(pr_event, caplog):
+    session = FakeSession(
+        FakeResponse(422, {"message": "line not in diff"}), FakeResponse(201, {"id": 7})
+    )
+    client = RestGitHubClient(token=SECRET_KEY, session=session)
+    event = _post_event(pr_event, timing={"startTime": _seconds_ago(1)}, line=999)
+
+    with caplog.at_level("INFO"):
+        output = post_comment(event, github_client=client)
+
+    assert output["posted"] is True and len(session.requests) == 2
+    [line] = _events(caplog, "review_posted")
+    assert line["fallback_422"] is True and line["comments"] == 1
+
+
+@pytest.mark.parametrize("timing", [None, {}, {"startTime": None}, {"startTime": "not a time"},
+                                    {"startTime": "2026-09-29T15:27:33"}])
+def test_no_review_posted_without_a_usable_start_time(pr_event, stub_github_client, caplog, timing):
+    event = _post_event(pr_event, timing=timing)
+
+    with caplog.at_level("INFO"):
+        output = post_comment(event, github_client=stub_github_client)
+
+    assert output["posted"] is True and len(stub_github_client.posted_reviews) == 1
+    assert _events(caplog, "review_posted") == []
+
+
+def test_review_posted_never_contains_review_text_or_token(pr_event, caplog):
+    session = FakeSession(FakeResponse(422, {"message": f"bad {COMMENT_MARKER}"}),
+                          FakeResponse(201, {"id": 7}))
+    client = RestGitHubClient(token=SECRET_KEY, session=session)
+
+    with caplog.at_level("INFO"):
+        post_comment(_post_event(pr_event, timing={"startTime": _seconds_ago(1)}),
+                     github_client=client)
+
+    [line] = [r.getMessage() for r in caplog.records
+              if r.getMessage().startswith('{"event": "review_posted"')]
+    for forbidden in (SUMMARY_MARKER, COMMENT_MARKER, SECRET_KEY, "src/app.py"):
+        assert forbidden not in line
 
 
 # --- the plain-text lines stay byte-identical ----------------------------------------------
