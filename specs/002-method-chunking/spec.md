@@ -1,5 +1,9 @@
 # Feature Specification: Method-Level Chunking for RAG Context
 
+> **Historical record.** This spec records the decisions as they were made and is not
+> updated as the code changes. For the current state of the pipeline, see the
+> [README](../../README.md).
+
 **Feature Branch**: `feat/method-chunking` (codereview-lambda) · a branch of the same name in codereview-app, both from `develop`
 
 **Created**: 2026-09-28

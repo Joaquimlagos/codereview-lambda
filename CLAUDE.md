@@ -12,15 +12,7 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
-```sh
-docker run -d --name codereview-localstack -p 4566:4566 -e SERVICES=s3,ssm localstack/localstack:3.0
-```
-
-**Do not use `localstack/localstack:latest`** (or other recent tags) on this project: newer
-LocalStack versions refuse to start — even for community services like S3/SSM — without a
-`LOCALSTACK_AUTH_TOKEN` (a paid license). Confirmed directly: `:latest` fails with "License
-activation failed"; `:3.0` (community edition) starts cleanly with no token. Stick to `:3.0`
-unless/until this project has a LocalStack license.
+The test suite runs against local stubs and needs no AWS, LocalStack, `.env` or network.
 
 ```sh
 cd infra && terraform init && terraform apply
@@ -38,14 +30,14 @@ Windows), set `-var python_bin=/path/to/python`.
 
 One folder per Lambda, one Lambda per Step Functions state (Principle II). Expected states, per the `codereview-infra` Step Functions definition:
 
-- `route_model/` — decides which Gemini model/route to use (via Jev, Principle III)
+- `route_model/` — classifies the PR's complexity tier (`low`/`medium`/`high`) and whether it needs project context (`needsContext`), via Jev (Principle III)
 - `retrieve_context/` — semantic retrieval: embeds the diff and ranks codereview-app's published index (S3 + Gemini embeddings). Reads index version 1 (whole files, top-3, unchanged pre-002 behaviour held by a golden test) and version 2 (method chunks: per-file queries in `diff_queries.py`, ranking/exclusion/JSON score logs in `ranking.py`) — see `specs/002-method-chunking/`
-- `invoke_llm/` — calls the Gemini API directly, selecting the model by complexity tier itself (no separate routing service, Principle III)
-- `post_comment/` — posts the review result back (GitHub)
+- `invoke_llm/` — calls the LLM providers directly (no separate routing service, Principle III): the tier's `LLM_MODELS_*` list of Groq, Cerebras and Gemini entries, tried in order, with the retrieved context packed into each provider's prompt budget (`integrations/llm_router.py`). The order and the reasons behind it are in README's "Model selection"; keep them there, not here
+- `post_comment/` — posts the review as inline PR comments through a GitHub App, falling back to one plain comment on a 422
 
 Each Lambda folder is self-contained: its own handler, own IAM policy reference, own tests.
 
-External integrations (Jev, Gemini, S3, SSM, GitHub) live behind testable abstractions per Principle IV, in a shared `src/integrations/` package (one module per external system, each with a real client and a local stub) — not per-Lambda duplicates.
+External integrations (Jev, Groq, Cerebras, Gemini, S3, SSM, Secrets Manager, GitHub) live behind testable abstractions per Principle IV, in a shared `src/integrations/` package (one module per external system, each with a real client and a local stub) — not per-Lambda duplicates.
 
 `infra/` holds this repo's Terraform: one execution role + `aws_lambda_function` per Lambda (`iam_route_model.tf`, `iam_retrieve_context.tf`, `iam_invoke_llm.tf`, `iam_post_comment.tf`), each least-privilege-scoped (only its own secret, if any; S3 read/write only where the handler actually needs it), plus native ARN publishing to SSM (`arn_publish.tf`), and one CloudWatch log group per Lambda with a fixed retention (see Log retention below).
 

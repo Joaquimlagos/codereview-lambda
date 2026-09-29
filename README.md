@@ -9,7 +9,7 @@ Serverless harness that routes pull requests to LLM models (Groq, Cerebras, Gemi
 ```text
 [codereview-app]  GitHub Actions, on every pull request
    │
-   ├─ uploads the diff ───────────────────────▶ S3  prs/{pr}/{sha}.diff
+   ├─ uploads the diff, minus review exclusions ─▶ S3  prs/{pr}/{sha}.diff
    └─ publishes PRReviewRequested (PR metadata + diff key only)
         │
 [codereview-infra]
@@ -69,29 +69,19 @@ Serverless harness that routes pull requests to LLM models (Groq, Cerebras, Gemi
 
 This is one of three independent repositories that make up the pipeline:
 
-| Repository | Role |
-|---|---|
-| [`codereview-app`](https://github.com/Joaquimlagos/codereview-app) | **Triggers.** A deliberately simple Java / Spring Boot "Task Manager" that exists to generate pull requests of different complexity. Its GitHub Actions authenticate to AWS with OIDC, upload each PR's diff to S3 and publish the `PRReviewRequested` event, and build the RAG index of the codebase. |
-| [`codereview-infra`](https://github.com/Joaquimlagos/codereview-infra) | **Orchestrates.** Terraform for the glue between the services: the EventBridge bus and rule that receive the event, the Step Functions state machine that calls the four Lambdas in order, the shared S3 artifacts bucket, the (initially empty) Secrets Manager secrets, and the IAM role the app's workflows assume. |
-| **`codereview-lambda`** (this repo) | **Executes.** The four Lambda functions that do the work (routing, retrieval, LLM review, posting the comment), with their least-privilege IAM roles, CloudWatch log groups, and the SSM parameters that publish their ARNs to the state machine. |
+| Repository | Role | Owns |
+| --- | --- | --- |
+| [`codereview-app`](https://github.com/Joaquimlagos/codereview-app) | **Triggers.** Sample Spring Boot app. Its GitHub Actions compute each PR's diff, upload it to S3, publish the `PRReviewRequested` event, and build the method-level RAG index. | The workflows (`pr-checks.yml`, `index-codebase.yml`, `index-script-tests.yml`) and the index builder (`scripts/`) |
+| [`codereview-infra`](https://github.com/Joaquimlagos/codereview-infra) | **Orchestrates.** The AWS glue between the other two. | EventBridge bus and rule, Step Functions state machine, artifacts bucket, the five Secrets Manager secrets, the GitHub OIDC role, Terraform remote state |
+| **[`codereview-lambda`](https://github.com/Joaquimlagos/codereview-lambda)** (this repo) | **Executes.** Classifies each PR, retrieves method-level RAG context, generates the review with Groq/Cerebras/Gemini fallback, and posts it as inline PR comments. | The four Lambdas, their IAM roles and CloudWatch log groups, and the SSM parameters that publish their ARNs |
 
 **At runtime** the chain is linear: the app **triggers**, infra **orchestrates**, lambda
 **executes**.
 
-**At deploy time** it isn't, because infra and lambda hand each other values through SSM
-Parameter Store in both directions: infra publishes the secret ARNs and the bucket name the
-Lambdas need, and the Lambdas publish the ARNs the state machine needs. The order is:
-
-1. `codereview-infra`: the secrets and the artifacts bucket only (a targeted apply), then fill
-   in the secret values.
-2. `codereview-lambda`: apply. It reads those values from SSM, deploys the four Lambdas, and
-   publishes their ARNs to `/codereview/lambda/<state>/arn`.
-3. `codereview-infra`: full apply. It reads the Lambda ARNs and creates EventBridge, Step
-   Functions and the OIDC role.
-4. `codereview-app`: can now trigger the pipeline (its OIDC role only exists after step 3).
-
-The exact commands are in [`codereview-infra`'s README](https://github.com/Joaquimlagos/codereview-infra#bootstrap-order)
-("Bootstrap order").
+**At deploy time** it isn't: infra publishes the secret ARNs and the bucket name the Lambdas
+need, and the Lambdas publish the ARNs the state machine needs, both through SSM Parameter
+Store. The first deployment therefore runs in phases across the two repos; the phases and
+commands are in [`codereview-infra`'s "Bootstrap order"](https://github.com/Joaquimlagos/codereview-infra#bootstrap-order).
 
 ## Why this exists
 
@@ -222,7 +212,7 @@ transiently, Step Functions retries the whole step. The review output records wh
 answered (`model_used`) and whether a fallback happened (`fell_back`).
 
 HTTP 413/429-as-too-large is grouped with the transient failures so a review isn't aborted
-when the prompt (the diff plus the retrieved RAG files) exceeds one model's limit. On Groq's
+when the prompt (the diff plus the retrieved methods) exceeds one model's limit. On Groq's
 free tier the limit is checked per request, *before* the call runs: `gpt-oss-120b` allows
 8,000 tokens per minute, and a single request larger than that is refused with a 413
 regardless of when it is sent. Cerebras' equivalent limit is checked against *actual* usage
@@ -371,10 +361,7 @@ groups.
   quota: a full rebuild of today's 41 chunks costs 41 of `gemini-embedding-001`'s 1,000 free
   requests per day, and it runs on every push to `develop`. Incremental indexing is in the
   backlog (`specs/002-method-chunking/tasks.md`).
-- **The high tier answers with the same model and effort as medium.** Since Gemini `high`
-  moved to the last resort (it returned 503 on 12 of 12 measured runs), high-tier reviews
-  are answered by `gpt-oss-120b` at `medium`, like medium-tier reviews. Complexity still sets
-  the fallback order and time budget, but not who answers; see
-  [Model selection](#model-selection).
+- **The high tier answers with the same model and effort as medium** (`gpt-oss-120b` at
+  `medium`); see [Model selection](#model-selection).
 - **Review quality is measured on 3 runs per side and 3 PRs.** That is enough to see that
   quality held, not to prove a small improvement.
