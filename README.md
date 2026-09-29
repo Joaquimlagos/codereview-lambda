@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Joaquimlagos/codereview-lambda/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Joaquimlagos/codereview-lambda/actions/workflows/ci.yml)
 
-Serverless harness that routes pull requests to LLM models (Groq, Gemini) by complexity, uses RAG for project context, and automatically comments its review on the PR.
+Serverless harness that routes pull requests to LLM models (Groq, Cerebras, Gemini) by complexity, uses RAG for project context, and automatically comments its review on the PR.
 
 ## Architecture
 
@@ -24,18 +24,30 @@ Serverless harness that routes pull requests to LLM models (Groq, Gemini) by com
                        │
                        ├─ needsContext?
                        │      ├─ yes ─▶ 2. RetrieveContext
-                       │      │            RAG: embeds the diff, ranks the project's index
-                       │      │            (S3 index/): the 3 closest files (index v1) or
-                       │      │            the 8 closest methods (index v2)
+                       │      │            RAG: embeds each changed file's diff, ranks the
+                       │      │            project's method-level index (S3 index/), and
+                       │      │            returns the 8 closest methods, leaving out code
+                       │      │            the diff itself changes
                        │      └─ no  ─▶ (skipped)
                        │
                        ├─ 3. InvokeLLM
                        │      tries the complexity tier's model list, in order:
                        │
-                       │      Groq ──▶ Gemini      ◀─ FALLBACK 1: next provider when a model
-                       │                              fails transiently (429 / 5xx / timeout),
-                       │                              rejects the prompt as too large (413),
-                       │                              or no longer exists (404)
+                       │      low / medium:  Groq ──▶ Cerebras ──▶ Gemini
+                       │      high:          Cerebras ──▶ Groq ──▶ Gemini
+                       │
+                       │      Groq      fast, free-tier baseline; leads low/medium
+                       │      Cerebras  same gpt-oss-120b model, 30K TPM vs. Groq's 8K —
+                       │                covers diffs too large for Groq; leads high
+                       │      Gemini    last resort in every tier (20 requests/day)
+                       │
+                       │      context is packed per attempt into that provider's
+                       │      prompt budget; a provider the diff alone overflows is
+                       │      skipped without being called
+                       │
+                       │      FALLBACK 1: next provider when a model fails transiently
+                       │      (429 / 5xx / timeout), rejects the prompt as too large
+                       │      (413 on Groq, 429 on Cerebras), or no longer exists (404)
                        │      every model down ──▶ LlmTransientError ──▶ Step Functions retries
                        │
                        └─ 4. PostComment
@@ -85,7 +97,7 @@ The exact commands are in [`codereview-infra`'s README](https://github.com/Joaqu
 
 Reviewing every pull request by hand is slow, and much of a first pass is repetitive: the same
 kinds of nitpicks and missed checks, PR after PR. This pipeline gives each PR an automated first
-review. An LLM reads the diff (plus related project files when the change needs them) and leaves
+review. An LLM reads the diff (plus the most related methods of the project when the change needs them) and leaves
 comments on the exact lines it is talking about, so people can spend their review time on design
 and intent. The review is advisory: it comments, and never approves or blocks a PR. It is a
 portfolio project, built to run entirely on free-tier services.
@@ -95,7 +107,99 @@ was specified, planned and broken into tasks with [GitHub Spec Kit](https://gith
 (tooling in [`.specify/`](.specify), specification and design artifacts in
 [`specs/001-pr-review-pipeline/`](specs/001-pr-review-pipeline)), governed by a
 [constitution](.specify/memory/constitution.md), and implemented together with an AI coding
-agent (Claude Code).
+agent (Claude Code). The second feature, method-level RAG
+([`specs/002-method-chunking/`](specs/002-method-chunking)), was built the same way, spanning
+this repo and `codereview-app`, and measured before and after with the same procedure.
+
+## Live demo
+
+[`codereview-app` PR #3](https://github.com/Joaquimlagos/codereview-app/pull/3) is a standing
+demonstration: five security defects planted on purpose, presented as plausible-sounding work
+("make authentication tolerant of clock skew between servers and improve login
+diagnostics"). Nothing in the diff, the commit message, or the branch name hints that any of
+it is intentional — the reviewer gets the same signal a real PR would give.
+
+**Measured over 3 runs, before and after method-level RAG** (the
+[baseline](specs/002-method-chunking/baseline.md) and
+[after-measurement](specs/002-method-chunking/after.md) of `specs/002-method-chunking`,
+2026-09-28). Within each side, every run got the same diff, the same retrieved context and
+a byte-identical prompt, so only the model's answer varies. All six runs were answered by
+the same model, `cerebras:gpt-oss-120b:medium`.
+
+| Defect | Detected before (whole-file RAG) | Detected after (method-level RAG) |
+|---|---|---|
+| `JwtValidator.isValid` fail-open — both `catch` blocks return `true`, accepting an expired, malformed, or forged-signature token | 3 of 3 | 3 of 3 |
+| Submitted password written to the log in plaintext | 3 of 3 | 3 of 3 |
+| Clock-skew tolerance set to 24 hours, keeping expired tokens usable for a day | 1 of 3 | 1 of 3 |
+| Different responses for "user not found" vs. "incorrect password" — user enumeration | 1 of 3 | **3 of 3** |
+| `JwtValidatorTest`'s assertion inverted, so a rejected-token test now expects acceptance | 0 of 3 | 0 of 3 |
+| **Mean per run** | **2.67 of 5** (range 2–4) | **3.33 of 5** (range 3–4) |
+
+**Two defects are reliable**: the fail-open validation and the plaintext password are
+flagged every time. **The inverted test assertion**, the subtlest of the five, was never
+caught. **The one change is user enumeration**, from 1 of 3 runs to 3 of 3. That is a positive
+signal, **not a conclusive one**: with 3 runs per side, a difference this size is below what
+the measurement can confirm, and the other four defects kept exactly the same rates.
+
+**Why three runs, not one.** Earlier single runs made the picture look better than it is:
+after the security checklist (research.md's "Security checklist for auth-sensitive changes")
+was added to the prompt, two separate runs each caught the enumeration, and one baseline run
+found 4 of 5. Repeating the identical prompt showed that was the good end of the range, not
+the typical result. Any change to the pipeline is measured against the mean over 3 runs,
+never against a single review.
+
+## Results
+
+### Method-level RAG (`specs/002-method-chunking`)
+
+The RAG index went from one entry per whole file to one entry per Java method, each with
+its package, class declaration and fields as a header, built with tree-sitter in
+`codereview-app`. Retrieval now embeds each changed file's diff separately, leaves out
+methods the diff itself changes, and packs the top 8 into each provider's prompt budget.
+Measured on `codereview-app` PRs #3, #7 and #8, 3 runs each, before and after, answered by
+the same models:
+
+**It improved what reaches the model:**
+
+| | Before (whole files) | After (methods) |
+|---|---|---|
+| Share of PR #8's diff that shaped retrieval | 26% (the embedding model silently drops everything past 2,048 tokens) | **all 11 changed files**, one query each |
+| Retrieved context repeating code the diff already shows (PRs #3, #7) | 3 of 3 files | **0** |
+| RAG context on PR #7 | 1,212 tokens | **727 (−40%)**, whole prompt −15% |
+| Attempts over their provider's budget | — | 0 of 15 |
+
+**And kept review quality where it was:**
+
+| PR | Inline comments per run, mean (before → after) | Planted defects found (PR #3) |
+|---|---|---|
+| #3 (planted auth defects) | 3.33 → 4.00 | 2.67 → 3.33 of 5 (enumeration 1/3 → 3/3; see [Live demo](#live-demo)) |
+| #7 (small, 5 files) | 1.33 → 1.33 | — |
+| #8 (large, 11 files) | 1.00 → 1.00 | — |
+
+PR #3's gain is a positive signal that 3 runs per side cannot confirm, not a proven
+improvement. One success criterion was **not met**: method-level scores do not separate
+relevant from irrelevant code more sharply than whole-file scores did (standardised gap
+1.78 / 1.93 / 1.78 → 2.12 / 1.72 / 1.37; the margin at the cut is still ~0.001). The gain
+is in *what* is retrieved, not in cleaner scores. Details, per-run data and the
+success-criteria table:
+[`specs/002-method-chunking/after.md`](specs/002-method-chunking/after.md).
+
+### Model fallback and review-quality rubric
+
+Two earlier measured cases, against real `codereview-app` PRs:
+
+- **[PR #8](https://github.com/Joaquimlagos/codereview-app/pull/8)** (11 files, +686 lines):
+  previously failed with no review posted at all — Groq rejected the prompt as too large
+  (413) and Gemini was overloaded (503), exhausting both entries in the then-two-provider
+  high tier. With Cerebras added, the same PR is reviewed in ~7 s by
+  `cerebras:gpt-oss-120b:medium`, flagging two real bugs: a `NullPointerException` risk in a
+  sort comparator, and a non-atomic name-uniqueness check that lets concurrent requests race
+  past it.
+- **[PR #7](https://github.com/Joaquimlagos/codereview-app/pull/7)**: went from 7 inline
+  comments — several purely complimentary ("which is appropriate", "good for consistency") —
+  to 2, both real problems (a validation-ordering bug, a maintainability note), once the
+  review-quality rubric required every comment to name a category and forbade praise as a
+  comment entry.
 
 ## Model selection
 
@@ -133,29 +237,26 @@ Free-tier availability varies a lot between models; see
 `specs/001-pr-review-pipeline/research.md`'s "Multi-provider model fallback" and "Cerebras as
 a third fallback provider" decisions for the measurements behind the current lists.
 
-**The high tier gets a genuinely different configuration, not just the same one twice — and
-runs it first, not as a rarely-reached fallback.** `LLM_MODELS_HIGH` leads with Gemini at
-`thinkingLevel: "high"`, then falls back to Cerebras at `medium`, then Groq at `medium`.
-Leading with Groq (as low and medium do) would leave the deeper Gemini pass almost never
-reached in practice, since Groq's `medium` attempt succeeds most of the time — making the
-high tier behave like medium's config despite being configured differently. Gemini `high`
-measured 6 inline comments vs. 2 at `low` on the same real prompt; Groq `medium` is a
-fallback, not the lead, because `high` effort on Groq reliably exhausts its output budget on
-reasoning alone and returns nothing (tested directly). Cerebras sits between Gemini and Groq
-in this tier specifically because a large diff can exhaust both of the others at once: Gemini
-`high` risks its 90 s read timeout on a large prompt (measured 84.7 s on a small ~600-token
-diff; a ~6,500-token diff timed out entirely in production), and Groq's 8,000 TPM ceiling
-rejects that same large diff outright — Cerebras' 30,000 TPM ceiling covers exactly that gap.
-The `high` Gemini call is also much slower than low/medium reasoning (measured up to 63 s vs.
-9–31 s at `low`), so it gets its own longer timeout, and with three fallback attempts instead
-of two the Lambda's overall timeout is 230 s rather than 180 s. This only changes
-`invoke-llm`'s own Lambda timeout, not `codereview-infra`'s Step Functions `Retry` (still
-`MaxAttempts: 1`, `IntervalSeconds: 30`): the worst case for a full review attempt is two
-230 s Lambda executions (the original attempt, then the one Step Functions retry) plus the
-30 s interval between them, roughly `2 × 230 s + 30 s ≈ 490 s` (about 8.2 minutes) before the
-step gives up and surfaces the failure — still fine for a non-blocking advisory check. See
-research.md's "High-tier reasoning: why Gemini, not Groq" and "Cerebras as a third fallback
-provider".
+**The high tier leads with Cerebras, and keeps Gemini `high` only as the last resort.**
+`LLM_MODELS_HIGH` is Cerebras at `medium`, then Groq at `medium`, then Gemini at
+`thinkingLevel: "high"`. Gemini `high` used to lead this tier, because it was the deeper
+reasoning pass (6 inline comments vs. 2 at `low` on the same prompt). But it returned HTTP
+503 on 12 of 12 measured high-tier reviews, each attempt costing a median 5.5 s and one of
+its 20 free requests per day, so every review was really answered by the Cerebras fallback
+anyway. Cerebras at `high` effort was tested on the real prompts: it spent its whole
+12,000-token output budget on reasoning without answering, 4 of 4 times.
+
+**The cost is explicit: in practice the high tier now runs the same model (`gpt-oss-120b`)
+and reasoning effort (`medium`) as the medium tier**, only with Cerebras first. The
+complexity classification still sets the fallback order and the time budget, but no longer
+changes who answers.
+
+Gemini `high` keeps its own longer timeout (90 s read, 95 s attempt budget). The worst case,
+all three attempts failing, is 50 + 50 + 95 = 195 s, inside the Lambda's 230 s. With Step
+Functions' one retry (`MaxAttempts: 1`, `IntervalSeconds: 30` in `codereview-infra`), the
+worst case for a full review is about `2 × 230 s + 30 s ≈ 490 s` (8.2 minutes) before the
+failure surfaces, which is fine for a non-blocking advisory check. See research.md's "High
+tier: Cerebras first, Gemini last".
 
 ## Review quality
 
@@ -262,10 +363,18 @@ groups.
   targeting another branch is still reviewed against develop's snapshot of the codebase, and
   a PR opened before develop was ever indexed is reviewed with no project context at all
   (`indexAvailable: false` — a deliberate graceful degradation, not a failure).
-- **Retrieval granularity depends on the published index.** With a version 1 index (one
-  entry per whole file), retrieval is whole-file, top-3, single-pass, exactly as before; a
-  large retrieved file consumes prompt budget in full. With a version 2 index
-  ([`specs/002-method-chunking`](specs/002-method-chunking)), each changed file's diff is its
-  own query, entries are methods with a context header, code the diff already changes is left
-  out, and the top 8 are packed into each provider's prompt budget. There is still no
-  reranking step in either version.
+- **Retrieval scores barely discriminate.** Method-level retrieval fixed coverage and
+  redundancy, but every candidate still scores within ~0.2 of the others, and the gap
+  between the 8th and 9th chunk is ~0.001. The top 8 is set by the prompt budget, not by a
+  visible relevance cliff. There is no reranking step.
+- **Each index rebuild spends one embedding request per chunk.** Batching does not reduce
+  quota: a full rebuild of today's 41 chunks costs 41 of `gemini-embedding-001`'s 1,000 free
+  requests per day, and it runs on every push to `develop`. Incremental indexing is in the
+  backlog (`specs/002-method-chunking/tasks.md`).
+- **The high tier answers with the same model and effort as medium.** Since Gemini `high`
+  moved to the last resort (it returned 503 on 12 of 12 measured runs), high-tier reviews
+  are answered by `gpt-oss-120b` at `medium`, like medium-tier reviews. Complexity still sets
+  the fallback order and time budget, but not who answers; see
+  [Model selection](#model-selection).
+- **Review quality is measured on 3 runs per side and 3 PRs.** That is enough to see that
+  quality held, not to prove a small improvement.
