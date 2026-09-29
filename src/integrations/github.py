@@ -119,6 +119,10 @@ def _format_fallback_body(summary: str, comments: list[ReviewCommentDraft]) -> s
 
 
 class GitHubClient(ABC):
+    # Whether the last post_review call fell back to a plain comment after a 422. Only feeds
+    # PostComment's `review_posted` log line; the returned ReviewComment is unchanged.
+    used_plain_comment_fallback: bool = False
+
     @abstractmethod
     def post_review(
         self,
@@ -179,6 +183,7 @@ class RestGitHubClient(GitHubClient):
                 for c in comments
             ],
         }
+        self.used_plain_comment_fallback = False
         try:
             response = self._session.post(url, headers=self._headers(), json=payload, timeout=15)
             if response.status_code == 422:
@@ -186,6 +191,7 @@ class RestGitHubClient(GitHubClient):
                 # diff (e.g. the model referenced a stale/removed line despite build_prompt's
                 # instructions). Degrade to one conversational comment instead of losing the
                 # review entirely — see research.md for the decision.
+                self.used_plain_comment_fallback = True
                 return self.post_comment(
                     repository=repository,
                     pr_id=pr_id,
@@ -232,9 +238,11 @@ class StubGitHubClient(GitHubClient):
         summary: str,
         comments: list[ReviewCommentDraft],
     ) -> ReviewComment:
+        self.used_plain_comment_fallback = False
         if self.fail:
             raise GitHubClientError("stub configured to simulate GitHub API failure")
         if comments and self.reject_inline_comments:
+            self.used_plain_comment_fallback = True
             return self.post_comment(
                 repository=repository,
                 pr_id=pr_id,

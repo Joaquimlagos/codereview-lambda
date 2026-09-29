@@ -19,7 +19,8 @@ build_prompt's rubric requires every inline comment to be a real problem with a 
 and `severity` — never praise or description, which belong in `summary` only — and appends a
 security checklist when any changed path looks auth-adjacent (research.md's "Review quality
 rubric"). Every successful call is logged (`finish_reason`/`finishReason` + token usage), not
-only failed ones.
+only failed ones, and every call that reaches a provider also gets one JSON `llm_call` line
+(outcome, HTTP status, time, normalised token counts) for the CloudWatch dashboard.
 
 Retrieved context from a version 2 index (method-level chunks, specs/002-method-chunking)
 is sized per model attempt: each provider has a prompt budget (`PROMPT_TOKEN_BUDGET`), the
@@ -32,6 +33,7 @@ before the index switches to version 2 changes nothing.
 import json
 import logging
 import re
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -146,7 +148,18 @@ class LlmRouterError(Exception):
     """Raised when a provider rejects the request or returns an unusable response — a
     failure neither a retry nor another model will fix (400, 401/403, a blocked response, or
     an empty one that was not cut off by the output limit — see LlmOutputTruncatedError).
-    Stops the fallback list immediately."""
+    Stops the fallback list immediately.
+
+    `http_status` (when the provider answered with an error status) and `empty_response`
+    (the provider answered but wrote no text) only feed the `llm_call` log line; they never
+    change how an error is classified or handled."""
+
+    def __init__(
+        self, message: str = "", *, http_status: int | None = None, empty_response: bool = False
+    ):
+        super().__init__(message)
+        self.http_status = http_status
+        self.empty_response = empty_response
 
 
 class LlmTransientError(LlmRouterError):
@@ -238,13 +251,17 @@ def _post_json(
 
     status = response.status_code
     if status in _TRANSIENT_STATUS_CODES:
-        raise LlmTransientError(f"{label} returned HTTP {status}: {response.text[:300]}")
+        raise LlmTransientError(
+            f"{label} returned HTTP {status}: {response.text[:300]}", http_status=status
+        )
     if status == 404 or (status == 400 and _error_code(response) in _MODEL_GONE_ERROR_CODES):
         raise LlmModelNotFoundError(
-            f"{label} not found (HTTP {status}): {response.text[:300]}"
+            f"{label} not found (HTTP {status}): {response.text[:300]}", http_status=status
         )
     if status >= 400:
-        raise LlmRouterError(f"{label} returned HTTP {status}: {response.text[:300]}")
+        raise LlmRouterError(
+            f"{label} returned HTTP {status}: {response.text[:300]}", http_status=status
+        )
 
     try:
         return response.json()
@@ -266,11 +283,26 @@ def _answer_text(candidate: dict) -> str:
     return "".join(part.get("text", "") for part in parts if not part.get("thought"))
 
 
+class ModelAnswer(str):
+    """A model's answer text that also carries the provider's `finish_reason` and raw token
+    `usage`, for the `llm_call` log line. It *is* the answer string, so every caller that
+    treats the result as plain text keeps working unchanged."""
+
+    finish_reason: str | None
+    usage: dict | None
+
+    def __new__(cls, text: str, finish_reason: str | None = None, usage: dict | None = None):
+        answer = super().__new__(cls, text)
+        answer.finish_reason = finish_reason
+        answer.usage = usage
+        return answer
+
+
 class ModelClient(ABC):
     @abstractmethod
     def generate(self, model: str, prompt: str, reasoning: str | None = None) -> str:
-        """Return the model's answer text for `prompt`. Raises LlmTransientError,
-        LlmModelNotFoundError or LlmRouterError (see _post_json)."""
+        """Return the model's answer text for `prompt` (a ModelAnswer for the real clients).
+        Raises LlmTransientError, LlmModelNotFoundError or LlmRouterError (see _post_json)."""
 
 
 class GeminiClient(ModelClient):
@@ -322,7 +354,8 @@ class GeminiClient(ModelClient):
                     f"MAX_TOKENS, usage {data.get('usageMetadata')})"
                 )
             raise LlmRouterError(
-                f"{label} returned an empty response (finishReason {finish_reason})"
+                f"{label} returned an empty response (finishReason {finish_reason})",
+                empty_response=True,
             )
         # Observability on the success path too, not only on failure (research.md, "Per-call
         # observability"): usageMetadata's thoughtsTokenCount is what actually explains a slow
@@ -333,7 +366,7 @@ class GeminiClient(ModelClient):
             candidates[0].get("finishReason"),
             data.get("usageMetadata"),
         )
-        return text
+        return ModelAnswer(text, candidates[0].get("finishReason"), data.get("usageMetadata"))
 
 
 # Explicit output budget per Groq reasoning effort. Without one, gpt-oss stops at about 3,072
@@ -397,7 +430,7 @@ def _openai_compatible_generate(
     prompt: str,
     reasoning: str | None,
     max_completion_tokens_by_effort: dict[str, int],
-) -> str:
+) -> ModelAnswer:
     """Shared request/response handling for Groq and Cerebras: both serve an OpenAI-compatible
     `chat/completions` endpoint for the same gpt-oss family of models, with identical request
     shape, error shape, and truncation signal (`finish_reason: "length"` with empty content).
@@ -429,7 +462,8 @@ def _openai_compatible_generate(
                 f"length, usage {data.get('usage')})"
             )
         raise LlmRouterError(
-            f"{label} returned an empty response (finish_reason {finish_reason})"
+            f"{label} returned an empty response (finish_reason {finish_reason})",
+            empty_response=True,
         )
     logger.info(
         "%s answered: finish_reason=%s usage=%s",
@@ -437,7 +471,7 @@ def _openai_compatible_generate(
         choices[0].get("finish_reason"),
         data.get("usage"),
     )
-    return text
+    return ModelAnswer(text, choices[0].get("finish_reason"), data.get("usage"))
 
 
 class GroqClient(ModelClient):
@@ -806,6 +840,67 @@ def _log_attempt(pr_id: str, spec: ModelSpec, packed: PackedPrompt) -> None:
     )
 
 
+def _token_counts(usage: dict | None) -> dict:
+    """Provider token usage under one set of names. `output_tokens` counts everything the
+    model generated, reasoning included: OpenAI-compatible `completion_tokens` already does;
+    Gemini reports the answer (`candidatesTokenCount`) and its thoughts separately."""
+    usage = usage or {}
+    if "promptTokenCount" in usage or "candidatesTokenCount" in usage:
+        answer = usage.get("candidatesTokenCount")
+        thoughts = usage.get("thoughtsTokenCount")
+        output = None if answer is None and thoughts is None else (answer or 0) + (thoughts or 0)
+        return {
+            "prompt_tokens": usage.get("promptTokenCount"),
+            "output_tokens": output,
+            "reasoning_tokens": thoughts,
+        }
+    return {
+        "prompt_tokens": usage.get("prompt_tokens"),
+        "output_tokens": usage.get("completion_tokens"),
+        "reasoning_tokens": (usage.get("completion_tokens_details") or {}).get("reasoning_tokens"),
+    }
+
+
+def _call_outcome(exc: LlmRouterError) -> str:
+    """`truncated` (output limit reached, or an empty answer), `model_not_found`, `transient`,
+    or `permanent` (400/401/403 and every other non-retryable failure)."""
+    if isinstance(exc, LlmOutputTruncatedError) or exc.empty_response:
+        return "truncated"
+    if isinstance(exc, LlmModelNotFoundError):
+        return "model_not_found"
+    if isinstance(exc, LlmTransientError):
+        return "transient"
+    return "permanent"
+
+
+def _log_call(
+    pr_id: str,
+    complexity: Complexity,
+    spec: ModelSpec,
+    attempt: int,
+    elapsed_ms: int,
+    answer: str | None = None,
+    error: LlmRouterError | None = None,
+) -> None:
+    """One machine-readable line per call that reached a provider, success or not. Only
+    identifiers, counts and timings: never the prompt, the diff, the answer, an error message
+    (provider error bodies can echo the prompt) or a key."""
+    record = {
+        "event": "llm_call",
+        "pr": int(pr_id) if pr_id.isdigit() else pr_id,
+        "tier": complexity.value,
+        "model": spec.label,
+        "attempt": attempt,
+        "fell_back": attempt > 0,
+        "outcome": "ok" if error is None else _call_outcome(error),
+        "http_status": None if error is None else error.http_status,
+        "llm_ms": elapsed_ms,
+        "finish_reason": getattr(answer, "finish_reason", None),
+        **_token_counts(getattr(answer, "usage", None)),
+    }
+    logger.info(json.dumps(record))
+
+
 class LlmRouter(ABC):
     @abstractmethod
     def generate_review(
@@ -896,9 +991,15 @@ class MultiProviderLlmRouter(LlmRouter):
                     f"of Lambda time left for another attempt. Failed: {failed}. "
                     f"Not attempted: {not_attempted}"
                 )
+            client = self._client(spec.provider)
+            started = time.monotonic()
             try:
-                text = self._client(spec.provider).generate(spec.model, prompt, spec.reasoning)
-            except (LlmTransientError, LlmModelNotFoundError) as exc:
+                text = client.generate(spec.model, prompt, spec.reasoning)
+            except LlmRouterError as exc:
+                elapsed_ms = round((time.monotonic() - started) * 1000)
+                _log_call(pr_id, complexity, spec, attempt, elapsed_ms, error=exc)
+                if not isinstance(exc, (LlmTransientError, LlmModelNotFoundError)):
+                    raise
                 if not isinstance(exc, LlmModelNotFoundError):
                     every_failure_was_model_gone = False
                 failures.append(f"{spec.label}: {exc}")
@@ -910,6 +1011,8 @@ class MultiProviderLlmRouter(LlmRouter):
                     "trying next model" if attempt + 1 < len(specs) else "no models left",
                 )
                 continue
+            elapsed_ms = round((time.monotonic() - started) * 1000)
+            _log_call(pr_id, complexity, spec, attempt, elapsed_ms, answer=text)
             review = parse_review_response(text, pr_id=pr_id, model_used=spec.label)
             return review.model_copy(update={"fell_back": attempt > 0})
 
