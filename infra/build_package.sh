@@ -31,7 +31,14 @@ mkdir -p "$BUILD_DIR"
   --target "$BUILD_DIR" \
   -r "$INFRA_DIR/requirements-lambda.txt"
 
-cp -r "$INFRA_DIR/../src/." "$BUILD_DIR/"
+# Copy src/ without local artefacts: bytecode caches (__pycache__/, *.pyc) and the
+# *.egg-info/ metadata `pip install -e .` writes there. None of it is code the function
+# runs. The same patterns are left out of src_hash in lambda_package.tf, so a test run or a
+# reinstall doesn't change the hash either. Keep the two lists in sync.
+tar -C "$INFRA_DIR/../src" \
+  --exclude='__pycache__' --exclude='*.pyc' --exclude='*.egg-info' \
+  -cf - . | tar -C "$BUILD_DIR" -xf -
+# The vendored dependencies above can bring their own caches too.
 find "$BUILD_DIR" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
 echo "Built Lambda package at $BUILD_DIR ($(du -sh "$BUILD_DIR" | cut -f1))"

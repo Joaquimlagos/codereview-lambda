@@ -1,0 +1,11 @@
+# Golden fixtures are compared byte for byte; never convert their line endings.
+tests/fixtures/** -text
+
+# Inputs to the Lambda build hash (infra/lambda_package.tf: requirements_hash and src_hash
+# are sha256 of the files as they sit on disk). With core.autocrlf on, a branch switch
+# rewrites them with CRLF, changing the hash without changing the code, and `terraform plan`
+# then reports a rebuild and a redeploy for nothing. Always LF, on every OS.
+src/**/*.py text eol=lf
+infra/requirements-lambda.txt text eol=lf
+# Run by bash from the build's local-exec; a CRLF copy breaks bash outright.
+infra/*.sh text eol=lf

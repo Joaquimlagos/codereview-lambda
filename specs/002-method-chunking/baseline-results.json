@@ -1,0 +1,455 @@
+[
+  {
+    "execution": "209bc841-8645-d94e-8812-a3fa655fccf4_cfd471c1-0239-dc38-a553-f085682b11d6",
+    "started": "2026-09-28T14:46:19.085000-03:00",
+    "status": "SUCCEEDED",
+    "prNumber": 3,
+    "sha": "5c570e7769fe698241099b683a3ec63ed820155d",
+    "diffKey": "prs/3/5c570e7769fe698241099b683a3ec63ed820155d.diff",
+    "complexity": "high",
+    "tokens": {
+      "instructions": {
+        "o200k": 688,
+        "gemini": 714
+      },
+      "diff": {
+        "o200k": 1676,
+        "gemini": 2128
+      },
+      "context": {
+        "o200k": 794,
+        "gemini": 1020
+      },
+      "total": {
+        "o200k": 3157,
+        "gemini": 3861
+      }
+    },
+    "provider_prompt_tokens": 3224,
+    "diff_embedding_tokens": 2126,
+    "diff_truncated_for_embedding": true,
+    "diff_o200k_tokens": 1676,
+    "index": {
+      "commit": "88801e485be2a743cf44006830e2740e1345cf76",
+      "generatedAt": "2026-09-28T03:11:55Z",
+      "s3VersionId": "Gbq3QxTKViw51IFuKCo5BwzgPQs_zodO",
+      "chunks": 16
+    },
+    "rag_returned": [
+      "src/main/java/com/codereview/app/auth/AuthController.java",
+      "src/main/java/com/codereview/app/auth/JwtValidator.java",
+      "src/test/java/com/codereview/app/auth/JwtValidatorTest.java"
+    ],
+    "rag_reproduced": true,
+    "rag_ranking": [
+      {
+        "path": "src/main/java/com/codereview/app/auth/AuthController.java",
+        "similarity": 0.8271,
+        "chars": 914
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/JwtValidator.java",
+        "similarity": 0.8184,
+        "chars": 1862
+      },
+      {
+        "path": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java",
+        "similarity": 0.7946,
+        "chars": 863
+      },
+      {
+        "path": "src/test/java/com/codereview/app/auth/AuthControllerTest.java",
+        "similarity": 0.794,
+        "chars": 1767
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/LoginResponse.java",
+        "similarity": 0.7873,
+        "chars": 80
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/InMemoryUsers.java",
+        "similarity": 0.7612,
+        "chars": 498
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/LoginRequest.java",
+        "similarity": 0.7489,
+        "chars": 99
+      },
+      {
+        "path": "src/main/resources/application.yml",
+        "similarity": 0.7461,
+        "chars": 317
+      },
+      {
+        "path": "src/main/java/com/codereview/app/tasks/TaskService.java",
+        "similarity": 0.7066,
+        "chars": 1226
+      },
+      {
+        "path": "pom.xml",
+        "similarity": 0.7021,
+        "chars": 2138
+      },
+      {
+        "path": "src/main/java/com/codereview/app/tasks/TaskController.java",
+        "similarity": 0.6919,
+        "chars": 1893
+      },
+      {
+        "path": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java",
+        "similarity": 0.6855,
+        "chars": 2488
+      },
+      {
+        "path": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java",
+        "similarity": 0.6854,
+        "chars": 1622
+      },
+      {
+        "path": "src/test/java/com/codereview/app/CodereviewAppApplicationTests.java",
+        "similarity": 0.6814,
+        "chars": 225
+      },
+      {
+        "path": "src/main/java/com/codereview/app/tasks/Task.java",
+        "similarity": 0.6701,
+        "chars": 120
+      },
+      {
+        "path": "src/main/java/com/codereview/app/CodereviewAppApplication.java",
+        "similarity": 0.669,
+        "chars": 336
+      }
+    ],
+    "model_used": "cerebras:gpt-oss-120b:medium",
+    "fell_back": true,
+    "parse_fallback": false,
+    "log_lines": [
+      "[WARNING]\t2026-09-28T17:46:38.979Z\t228e360c-f52f-4597-be0e-3fea20e18f00\tModel gemini:gemini-3.5-flash:high failed for PR 3 (gemini:gemini-3.5-flash returned HTTP 503: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n); trying next model\n",
+      "[INFO]\t2026-09-28T17:46:40.738Z\t228e360c-f52f-4597-be0e-3fea20e18f00\tcerebras:gpt-oss-120b answered: finish_reason=stop usage={'total_tokens': 5596, 'completion_tokens': 2372, 'completion_tokens_details': {'accepted_prediction_tokens': 0, 'rejected_prediction_tokens': 0, 'reasoning_tokens': 2102}, 'prompt_tokens': 3224, 'prompt_tokens_details': {'cached_tokens': 0}}\n"
+    ],
+    "summary": "Added logging of credentials, differentiated error messages, and relaxed JWT validation, introducing several security concerns.",
+    "comments": [
+      {
+        "path": "src/main/java/com/codereview/app/auth/AuthController.java",
+        "line": 29,
+        "body": "Logging the password (and username) at WARN level writes sensitive credentials to application logs, creating a risk of credential leakage and compliance violations.",
+        "category": "security",
+        "severity": "high"
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/AuthController.java",
+        "line": 28,
+        "body": "Returning distinct messages for \"User not found\" vs \"Incorrect password\" enables user enumeration attacks, allowing an attacker to discover valid usernames.",
+        "category": "security",
+        "severity": "medium"
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/JwtValidator.java",
+        "line": 55,
+        "body": "The isValid method catches ExpiredJwtException and generic JwtException but still returns true, effectively accepting expired or otherwise invalid JWTs and breaking authentication guarantees.",
+        "category": "security",
+        "severity": "high"
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/JwtValidator.java",
+        "line": 28,
+        "body": "A generous clock skew allowance of 24 hours widens the window for accepting stale or replayed tokens, weakening token expiry enforcement.",
+        "category": "security",
+        "severity": "medium"
+      }
+    ]
+  },
+  {
+    "execution": "7df059d3-2af7-5e04-108d-aeac33c0db64_2499407e-e060-a27a-fd6a-8879c04ee1f5",
+    "started": "2026-09-28T14:46:21.386000-03:00",
+    "status": "SUCCEEDED",
+    "prNumber": 7,
+    "sha": "5b34cf01f486121d937a40602d1c01bc4e9acb5c",
+    "diffKey": "prs/7/5b34cf01f486121d937a40602d1c01bc4e9acb5c.diff",
+    "complexity": "medium",
+    "tokens": {
+      "instructions": {
+        "o200k": 525,
+        "gemini": 541
+      },
+      "diff": {
+        "o200k": 1451,
+        "gemini": 1867
+      },
+      "context": {
+        "o200k": 1212,
+        "gemini": 1537
+      },
+      "total": {
+        "o200k": 3187,
+        "gemini": 3944
+      }
+    },
+    "provider_prompt_tokens": 3258,
+    "diff_embedding_tokens": 1848,
+    "diff_truncated_for_embedding": false,
+    "diff_o200k_tokens": 1451,
+    "index": {
+      "commit": "88801e485be2a743cf44006830e2740e1345cf76",
+      "generatedAt": "2026-09-28T03:11:55Z",
+      "s3VersionId": "Gbq3QxTKViw51IFuKCo5BwzgPQs_zodO",
+      "chunks": 16
+    },
+    "rag_returned": [
+      "src/test/java/com/codereview/app/tasks/TaskControllerTest.java",
+      "src/test/java/com/codereview/app/tasks/TaskServiceTest.java",
+      "src/main/java/com/codereview/app/tasks/TaskService.java"
+    ],
+    "rag_reproduced": true,
+    "rag_ranking": [
+      {
+        "path": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java",
+        "similarity": 0.8004,
+        "chars": 2488
+      },
+      {
+        "path": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java",
+        "similarity": 0.7904,
+        "chars": 1622
+      },
+      {
+        "path": "src/main/java/com/codereview/app/tasks/TaskService.java",
+        "similarity": 0.785,
+        "chars": 1226
+      },
+      {
+        "path": "src/main/java/com/codereview/app/tasks/TaskController.java",
+        "similarity": 0.7812,
+        "chars": 1893
+      },
+      {
+        "path": "src/main/java/com/codereview/app/tasks/Task.java",
+        "similarity": 0.7501,
+        "chars": 120
+      },
+      {
+        "path": "src/test/java/com/codereview/app/auth/AuthControllerTest.java",
+        "similarity": 0.7262,
+        "chars": 1767
+      },
+      {
+        "path": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java",
+        "similarity": 0.7055,
+        "chars": 863
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/AuthController.java",
+        "similarity": 0.7053,
+        "chars": 914
+      },
+      {
+        "path": "src/test/java/com/codereview/app/CodereviewAppApplicationTests.java",
+        "similarity": 0.7011,
+        "chars": 225
+      },
+      {
+        "path": "pom.xml",
+        "similarity": 0.6922,
+        "chars": 2138
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/JwtValidator.java",
+        "similarity": 0.6921,
+        "chars": 1862
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/LoginResponse.java",
+        "similarity": 0.6761,
+        "chars": 80
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/InMemoryUsers.java",
+        "similarity": 0.6689,
+        "chars": 498
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/LoginRequest.java",
+        "similarity": 0.6672,
+        "chars": 99
+      },
+      {
+        "path": "src/main/java/com/codereview/app/CodereviewAppApplication.java",
+        "similarity": 0.6598,
+        "chars": 336
+      },
+      {
+        "path": "src/main/resources/application.yml",
+        "similarity": 0.6542,
+        "chars": 317
+      }
+    ],
+    "model_used": "groq:openai/gpt-oss-120b:medium",
+    "fell_back": false,
+    "parse_fallback": false,
+    "log_lines": [
+      "[INFO]\t2026-09-28T17:46:44.305Z\td226972f-d843-4c4b-8a53-1bcceba4f37f\tgroq:openai/gpt-oss-120b answered: finish_reason=stop usage={'queue_time': 0.230937165, 'prompt_tokens': 3258, 'prompt_time': 0.175724113, 'completion_tokens': 2681, 'completion_time': 5.602857843, 'total_tokens': 5939, 'total_time': 5.778581956, 'completion_tokens_details': {'reasoning_tokens': 2497}}\n"
+    ],
+    "summary": "Added InvalidTaskException and validation for task titles, with a controller exception handler and related tests.",
+    "comments": [
+      {
+        "path": "src/main/java/com/codereview/app/tasks/TaskService.java",
+        "line": 36,
+        "body": "Calling validateTitle(task) before checking if the task exists means an InvalidTaskException (400 Bad Request) is thrown even when the target resource is missing, which should instead result in a 404 Not Found. This mixes validation errors with resource‑not‑found semantics.",
+        "category": "bug",
+        "severity": "medium"
+      },
+      {
+        "path": "src/main/java/com/codereview/app/tasks/TaskController.java",
+        "line": 60,
+        "body": "The exception handler returns a plain‑text body while the rest of the API returns JSON, leading to inconsistent response formats and making client error handling harder.",
+        "category": "maintainability",
+        "severity": "low"
+      }
+    ]
+  },
+  {
+    "execution": "ea864ec9-146f-3816-dff3-20153fb97361_ca56330e-40b7-a2c0-8040-02bc5369a5b4",
+    "started": "2026-09-28T14:13:24.797000-03:00",
+    "status": "SUCCEEDED",
+    "prNumber": 8,
+    "sha": "850fb69acf9f0c6ac3403b51423c8703d62bfd79",
+    "diffKey": "prs/8/850fb69acf9f0c6ac3403b51423c8703d62bfd79.diff",
+    "complexity": "high",
+    "tokens": {
+      "instructions": {
+        "o200k": 525,
+        "gemini": 541
+      },
+      "diff": {
+        "o200k": 6531,
+        "gemini": 8052
+      },
+      "context": {
+        "o200k": 726,
+        "gemini": 914
+      },
+      "total": {
+        "o200k": 7781,
+        "gemini": 9506
+      }
+    },
+    "provider_prompt_tokens": 7848,
+    "diff_embedding_tokens": 7918,
+    "diff_truncated_for_embedding": true,
+    "diff_o200k_tokens": 6531,
+    "index": {
+      "commit": "88801e485be2a743cf44006830e2740e1345cf76",
+      "generatedAt": "2026-09-28T03:11:55Z",
+      "s3VersionId": "Gbq3QxTKViw51IFuKCo5BwzgPQs_zodO",
+      "chunks": 16
+    },
+    "rag_returned": [
+      "src/main/java/com/codereview/app/tasks/TaskService.java",
+      "src/main/java/com/codereview/app/tasks/TaskController.java",
+      "src/main/java/com/codereview/app/tasks/Task.java"
+    ],
+    "rag_reproduced": true,
+    "rag_ranking": [
+      {
+        "path": "src/main/java/com/codereview/app/tasks/TaskService.java",
+        "similarity": 0.7889,
+        "chars": 1226
+      },
+      {
+        "path": "src/main/java/com/codereview/app/tasks/TaskController.java",
+        "similarity": 0.7784,
+        "chars": 1893
+      },
+      {
+        "path": "src/main/java/com/codereview/app/tasks/Task.java",
+        "similarity": 0.7598,
+        "chars": 120
+      },
+      {
+        "path": "pom.xml",
+        "similarity": 0.7488,
+        "chars": 2138
+      },
+      {
+        "path": "src/test/java/com/codereview/app/tasks/TaskServiceTest.java",
+        "similarity": 0.7473,
+        "chars": 1622
+      },
+      {
+        "path": "src/test/java/com/codereview/app/tasks/TaskControllerTest.java",
+        "similarity": 0.744,
+        "chars": 2488
+      },
+      {
+        "path": "src/test/java/com/codereview/app/CodereviewAppApplicationTests.java",
+        "similarity": 0.7403,
+        "chars": 225
+      },
+      {
+        "path": "src/main/java/com/codereview/app/CodereviewAppApplication.java",
+        "similarity": 0.7381,
+        "chars": 336
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/LoginResponse.java",
+        "similarity": 0.7334,
+        "chars": 80
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/LoginRequest.java",
+        "similarity": 0.725,
+        "chars": 99
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/AuthController.java",
+        "similarity": 0.7213,
+        "chars": 914
+      },
+      {
+        "path": "src/main/resources/application.yml",
+        "similarity": 0.7011,
+        "chars": 317
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/InMemoryUsers.java",
+        "similarity": 0.6968,
+        "chars": 498
+      },
+      {
+        "path": "src/test/java/com/codereview/app/auth/AuthControllerTest.java",
+        "similarity": 0.6955,
+        "chars": 1767
+      },
+      {
+        "path": "src/main/java/com/codereview/app/auth/JwtValidator.java",
+        "similarity": 0.6882,
+        "chars": 1862
+      },
+      {
+        "path": "src/test/java/com/codereview/app/auth/JwtValidatorTest.java",
+        "similarity": 0.6732,
+        "chars": 863
+      }
+    ],
+    "model_used": "cerebras:gpt-oss-120b:medium",
+    "fell_back": true,
+    "parse_fallback": false,
+    "log_lines": [
+      "[WARNING]\t2026-09-28T17:13:42.941Z\tf7ea3b69-e48c-4cda-b6c2-30bea1a6bc0b\tModel gemini:gemini-3.5-flash:high failed for PR 8 (gemini:gemini-3.5-flash returned HTTP 503: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n); trying next model\n",
+      "[INFO]\t2026-09-28T17:13:44.302Z\tf7ea3b69-e48c-4cda-b6c2-30bea1a6bc0b\tcerebras:gpt-oss-120b answered: finish_reason=stop usage={'total_tokens': 9481, 'completion_tokens': 1633, 'completion_tokens_details': {'accepted_prediction_tokens': 0, 'rejected_prediction_tokens': 0, 'reasoning_tokens': 1516}, 'prompt_tokens': 7848, 'prompt_tokens_details': {'cached_tokens': 7808}}\n"
+    ],
+    "summary": "Introduces project domain with Create/Update request records, in‑memory repository, service layer, controller and accompanying tests.",
+    "comments": [
+      {
+        "path": "src/main/java/com/codereview/app/projects/InMemoryProjectRepository.java",
+        "line": 21,
+        "body": "Sorting projects by id assumes every stored Project has a non‑null id; if a null id were present the Comparator.comparing call would throw a NullPointerException, making findAll()/findByArchived() fragile.",
+        "category": "bug",
+        "severity": "medium"
+      }
+    ]
+  }
+]

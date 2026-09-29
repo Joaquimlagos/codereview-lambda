@@ -597,6 +597,11 @@ in `LLM_MODELS_*`, and Gemma is out. Kept for the measurements and reasoning tha
 
 ## High-tier reasoning: why Gemini, not Groq
 
+*Superseded on 2026-09-28 by "High tier: Cerebras first, Gemini last" below: Gemini `:high`
+stopped answering (503 on 12 of 12 measured runs), so it moved from the lead to the last
+resort. The Gemini-high timeout and budget overrides described here still apply to that
+last-resort attempt.*
+
 *Note: `LLM_MODELS_HIGH` gained a third entry, Cerebras, after this decision was written — see
 "Cerebras as a third fallback provider" below. The Gemini-leads-Groq-falls-back order and the
 Gemini-high-specific timeout/budget overrides described here are unchanged; only the Lambda
@@ -665,6 +670,9 @@ timeout math at the end of this section is superseded (three entries, not two �
   need anywhere near 90 s in practice).
 
 ## Cerebras as a third fallback provider
+
+*The high tier's order in this section was changed on 2026-09-28; see "High tier: Cerebras
+first, Gemini last" below. LOW and MEDIUM are unchanged.*
 
 - **Decision**: Every tier's fallback list gained a third entry, Cerebras, serving the same
   `gpt-oss-120b` model Groq does. LOW and MEDIUM lead with Groq, then Cerebras, then Gemini
@@ -882,3 +890,52 @@ timeout math at the end of this section is superseded (three entries, not two �
   (avoid speculative complexity here).
 - **Alternatives considered**: Idempotency key check inside `PostComment` before posting —
   possible future enhancement, deliberately deferred rather than built now.
+
+## High tier: Cerebras first, Gemini last
+
+- **Decision** (2026-09-28): `LLM_MODELS_HIGH =
+  cerebras:gpt-oss-120b:medium,groq:openai/gpt-oss-120b:medium,gemini:gemini-3.5-flash:high`.
+  Cerebras at `medium` leads, Groq at `medium` follows, and Gemini `:high` moves from the
+  lead to the last resort. LOW and MEDIUM are unchanged.
+- **Why**:
+  - **Gemini `:high` did not answer a single measured high-tier review.** It returned HTTP
+    503 on 12 of 12 runs (the 6 baseline and 6 after-measurement runs of
+    `specs/002-method-chunking`, PRs #3 and #8). Every one fell back to Cerebras `:medium`,
+    which answered.
+  - **Leading with it cost time and quota for nothing.** The 503 took a median 5.5 s
+    (0.6–14.3 s) of the InvokeLLM step's median 7.4 s; Cerebras then answered in 1.3–2.5 s.
+    Each attempt also spends one of Gemini 3.5 Flash's **20 requests per day**
+    (002 research R15).
+  - **Cerebras `:high` is not usable at a viable output cap.** It was probed with the real
+    after-measurement prompts of PRs #3 and #8 (3,061 and 7,804 prompt tokens), 2 calls
+    each, `max_completion_tokens: 12000`, 65 s apart. All 4 ended `finish_reason: "length"`
+    with 11,997 of 12,000 completion tokens spent on reasoning and **no answer**, in 6.9–8.5 s.
+    Time was not the problem (well inside the 45 s window); the reasoning simply never
+    stopped. This is the same failure research recorded for Groq at `high` ("High-tier
+    reasoning: why Gemini, not Groq"). In the router it would be an `LlmOutputTruncatedError`
+    costing ~8 s and ~15K of Cerebras' 30K tokens per minute before falling through.
+  - **Why a larger cap was not tested**: under Cerebras' 30,000 TPM, the largest cap PR #8's
+    prompt allows is about 22,000 tokens. Nothing suggested 22,000 would be enough, since
+    the reasoning consumed all 12,000 it was given. And a single call at that size would
+    use almost the whole minute's token budget, blocking any other review in the same
+    minute. Not worth a probe.
+- **Cost: the high tier now runs the same model and effort as medium.** In practice every
+  high-tier review is answered by `gpt-oss-120b` at `medium`, like medium-tier reviews, only
+  with Cerebras first instead of Groq. The complexity classification still decides the
+  fallback order and the time budget, but **no longer decides the answering model or its
+  reasoning effort**. This does not make reviews worse than before: Cerebras `:medium`
+  already answered 100% of measured high-tier reviews. It makes explicit what was already
+  true. The only route to deeper reasoning left in the high tier is Gemini `:high` as the
+  last resort. Revisit if Gemini starts answering again, or a free model finishes `high`
+  reasoning within a usable cap. Backlog: let the high tier decide something else that
+  affects the review, such as more RAG context (002 tasks.md).
+- **Timeout arithmetic** (unchanged total, new order): Cerebras 50 s + Groq 50 s + Gemini
+  `:high` 95 s = 195 s worst case, inside the 230 s Lambda timeout with ~35 s for cold start
+  and secret fetch. After two slow failures ~120 s remain, more than Gemini's 95 s budget,
+  so the last resort still runs (`test_gemini_high_still_fits_after_two_slow_failures_...`).
+  End to end with Step Functions' single retry: about 230 + 30 + 230 s ≈ 8 min, as before.
+- **Groq second** serves the same `gpt-oss-120b`. On a diff too large for its budget (PR #8
+  estimates 11,133 tokens against Groq's 4,300), it is skipped without being called
+  (002 FR-024), so the review goes straight to Gemini with no wasted 413.
+- **Cerebras load (5 RPM) is unchanged in practice**: it already answered every high-tier
+  review. It now gets the request ~5 s earlier.

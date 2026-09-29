@@ -1,0 +1,18 @@
+{
+  "pr_id": "3",
+  "chunks": [
+    {
+      "path": "src/main/java/com/codereview/app/auth/AuthController.java",
+      "text": "package com.codereview.app.auth;\n\n@RestController\n@RequestMapping(\"/auth\")\npublic class AuthController {\n\n    private final JwtValidator jwtValidator;\n\n    public AuthController(JwtValidator jwtValidator) {\n        this.jwtValidator = jwtValidator;\n    }\n\n    @PostMapping(\"/login\")\n    public ResponseEntity<LoginResponse> login(@RequestBody LoginRequest request) {\n        if (!InMemoryUsers.isValid(request.username(), request.password())) {\n            return ResponseEntity.status(401).build();\n        }\n        return ResponseEntity.ok(new LoginResponse(jwtValidator.generateToken(request.username())));\n    }\n}\n"
+    },
+    {
+      "path": "src/main/java/com/codereview/app/auth/InMemoryUsers.java",
+      "text": "package com.codereview.app.auth;\n\nfinal class InMemoryUsers {\n\n    private static final Map<String, String> CREDENTIALS = Map.of(\"admin\", \"admin123\");\n\n    private InMemoryUsers() {\n    }\n\n    static boolean isValid(String username, String password) {\n        return CREDENTIALS.getOrDefault(username, \"\").equals(password);\n    }\n}\n"
+    },
+    {
+      "path": "src/main/java/com/codereview/app/auth/LoginResponse.java",
+      "text": "package com.codereview.app.auth;\n\npublic record LoginResponse(String token) {\n}\n"
+    }
+  ],
+  "index_available": true
+}
