@@ -300,7 +300,7 @@ SUMMARY_MARKER = "SENTINEL_SUMMARY_do_not_log"
 COMMENT_MARKER = "SENTINEL_COMMENT_do_not_log"
 
 
-def _post_event(pr_event: dict, timing: dict | None = None, line: int = 5) -> dict:
+def _post_event(pr_event: dict, timing: dict | None = None, line: int = 4) -> dict:
     event = {
         **pr_event,
         "analysis": {
@@ -328,11 +328,11 @@ def _seconds_ago(seconds: float) -> str:
     return started.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def test_review_posted_has_every_field(pr_event, stub_github_client, caplog):
+def test_review_posted_has_every_field(pr_event, stub_github_client, stub_storage, caplog):
     event = _post_event(pr_event, timing={"startTime": _seconds_ago(12)})
 
     with caplog.at_level("INFO"):
-        post_comment(event, github_client=stub_github_client)
+        post_comment(event, github_client=stub_github_client, storage=stub_storage)
 
     [line] = _events(caplog, "review_posted")
     assert line == {
@@ -345,15 +345,15 @@ def test_review_posted_has_every_field(pr_event, stub_github_client, caplog):
     assert 12_000 <= line["elapsed_ms"] < 60_000
 
 
-def test_review_posted_reports_the_422_fallback(pr_event, caplog):
+def test_review_posted_reports_the_422_fallback(pr_event, stub_storage, caplog):
     session = FakeSession(
         FakeResponse(422, {"message": "line not in diff"}), FakeResponse(201, {"id": 7})
     )
     client = RestGitHubClient(token=SECRET_KEY, session=session)
-    event = _post_event(pr_event, timing={"startTime": _seconds_ago(1)}, line=999)
+    event = _post_event(pr_event, timing={"startTime": _seconds_ago(1)})
 
     with caplog.at_level("INFO"):
-        output = post_comment(event, github_client=client)
+        output = post_comment(event, github_client=client, storage=stub_storage)
 
     assert output["posted"] is True and len(session.requests) == 2
     [line] = _events(caplog, "review_posted")
@@ -362,24 +362,26 @@ def test_review_posted_reports_the_422_fallback(pr_event, caplog):
 
 @pytest.mark.parametrize("timing", [None, {}, {"startTime": None}, {"startTime": "not a time"},
                                     {"startTime": "2026-09-29T15:27:33"}])
-def test_no_review_posted_without_a_usable_start_time(pr_event, stub_github_client, caplog, timing):
+def test_no_review_posted_without_a_usable_start_time(
+    pr_event, stub_github_client, stub_storage, caplog, timing
+):
     event = _post_event(pr_event, timing=timing)
 
     with caplog.at_level("INFO"):
-        output = post_comment(event, github_client=stub_github_client)
+        output = post_comment(event, github_client=stub_github_client, storage=stub_storage)
 
     assert output["posted"] is True and len(stub_github_client.posted_reviews) == 1
     assert _events(caplog, "review_posted") == []
 
 
-def test_review_posted_never_contains_review_text_or_token(pr_event, caplog):
+def test_review_posted_never_contains_review_text_or_token(pr_event, stub_storage, caplog):
     session = FakeSession(FakeResponse(422, {"message": f"bad {COMMENT_MARKER}"}),
                           FakeResponse(201, {"id": 7}))
     client = RestGitHubClient(token=SECRET_KEY, session=session)
 
     with caplog.at_level("INFO"):
         post_comment(_post_event(pr_event, timing={"startTime": _seconds_ago(1)}),
-                     github_client=client)
+                     github_client=client, storage=stub_storage)
 
     [line] = [r.getMessage() for r in caplog.records
               if r.getMessage().startswith('{"event": "review_posted"')]

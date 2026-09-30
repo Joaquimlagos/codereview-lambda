@@ -29,7 +29,7 @@ def test_post_comment_output_matches_review_comment_contract(pr_event, stub_gith
     assert len(stub_github_client.posted_reviews) == 1
 
 
-def test_post_comment_posts_inline_comments(pr_event, stub_github_client):
+def test_post_comment_posts_inline_comments(pr_event, stub_github_client, stub_storage):
     event = _event_with_analysis(
         pr_event,
         {
@@ -38,7 +38,7 @@ def test_post_comment_posts_inline_comments(pr_event, stub_github_client):
             "comments": [
                 {
                     "path": "src/app.py",
-                    "line": 5,
+                    "line": 4,
                     "body": "Log the exception.",
                     "category": "bug",
                     "severity": "medium",
@@ -48,7 +48,7 @@ def test_post_comment_posts_inline_comments(pr_event, stub_github_client):
         },
     )
 
-    output = post_comment(event, github_client=stub_github_client)
+    output = post_comment(event, github_client=stub_github_client, storage=stub_storage)
 
     validated = ReviewComment.model_validate(output)
     assert validated.posted is True
@@ -57,7 +57,7 @@ def test_post_comment_posts_inline_comments(pr_event, stub_github_client):
 
 
 def test_post_comment_falls_back_to_conversational_comment_on_invalid_line(
-    pr_event, stub_github_client
+    pr_event, stub_github_client, stub_storage
 ):
     """GitHub rejects (422) the whole review if any comment's line isn't part of the diff.
     PostComment MUST still succeed — degrading to a single conversational comment instead of
@@ -71,8 +71,8 @@ def test_post_comment_falls_back_to_conversational_comment_on_invalid_line(
             "comments": [
                 {
                     "path": "src/app.py",
-                    "line": 999,
-                    "body": "Out-of-diff line.",
+                    "line": 4,
+                    "body": "A line GitHub still refuses.",
                     "category": "bug",
                     "severity": "medium",
                 }
@@ -81,7 +81,7 @@ def test_post_comment_falls_back_to_conversational_comment_on_invalid_line(
         },
     )
 
-    output = post_comment(event, github_client=stub_github_client)
+    output = post_comment(event, github_client=stub_github_client, storage=stub_storage)
 
     validated = ReviewComment.model_validate(output)
     assert validated.posted is True

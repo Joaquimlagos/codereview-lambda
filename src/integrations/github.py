@@ -179,7 +179,7 @@ class RestGitHubClient(GitHubClient):
             # or request changes on the PR.
             "event": "COMMENT",
             "comments": [
-                {"path": c.path, "line": c.line, "side": "RIGHT", "body": _render_comment_body(c)}
+                {"path": c.path, "line": c.line, "side": c.side, "body": _render_comment_body(c)}
                 for c in comments
             ],
         }

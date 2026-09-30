@@ -10,6 +10,7 @@ tests/contract/test_route_model_contract.py for a test that fails if this diverg
 """
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -113,11 +114,20 @@ class ReviewCommentDraft(BaseModel):
 
     path: str = Field(min_length=1)
     # Line number in the file AFTER the change (the diff's "+"/right side) — this is what
-    # GitHub's Reviews API expects paired with `side: "RIGHT"` (see integrations/github.py).
+    # GitHub's Reviews API expects paired with `side: "RIGHT"` (see integrations/github.py),
+    # unless PostComment moved the comment to a removed line (`side` below).
     line: int = Field(gt=0)
     body: str = Field(min_length=1)
     category: CommentCategory
     severity: CommentSeverity
+    # The text of the line the model means (build_prompt asks for it). PostComment re-anchors
+    # the comment to where this text actually is when `line` points somewhere else. Optional,
+    # so a response without it still parses; the comment is then only checked against the
+    # diff's line numbers.
+    code_snippet: str | None = None
+    # Set by PostComment, never by the model: LEFT only when `code_snippet` matched a removed
+    # line, in which case `line` is that line's pre-change number.
+    side: Literal["RIGHT", "LEFT"] = "RIGHT"
 
 
 class GeneratedReview(BaseModel):
