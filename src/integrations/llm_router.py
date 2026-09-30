@@ -41,6 +41,7 @@ from dataclasses import dataclass
 from contracts.models import Complexity, ContextChunk, GeneratedReview, ReviewCommentDraft
 from contracts.token_estimate import estimate_tokens
 from integrations.config import ConfigError, require_env
+from integrations.diff_lines import annotate_diff
 
 logger = logging.getLogger(__name__)
 
@@ -590,8 +591,9 @@ def build_prompt(
     Instructs the model to reply with ONLY the structured JSON shape `parse_review_response`
     below expects — no markdown fences, no preamble — so review comments can be anchored to
     specific diff lines (inline PR comments) instead of landing as one undifferentiated block
-    of text. The diff is passed through with its hunk headers intact (`@@ -a,b +c,d @@`),
-    which is what lets the model work out each line's post-change number at all.
+    of text. Each diff line carries its post-change number (`annotate_diff`), so the model
+    copies `line` instead of counting it from the hunk header, and names the line's text in
+    `code_snippet` so PostComment can re-anchor a comment whose number is still off.
 
     `paths` (the event's full changed-file list, not just what happens to be in `diff_text`)
     gates an additional security checklist — see `_touches_security_sensitive_path`.
@@ -602,23 +604,23 @@ def build_prompt(
         "text — in exactly this shape:\n"
         '{"summary": "<2-3 sentence overview of the change>", '
         '"comments": [{"path": "<file path exactly as it appears in the diff>", '
-        '"line": <line number, integer>, "body": "<the problem, and why it matters>", '
+        '"line": <line number, integer>, "code_snippet": "<the exact text of that line>", '
+        '"body": "<the problem, and why it matters>", '
         '"category": "bug | security | performance | maintainability", '
         '"severity": "low | medium | high"}]}\n\n'
         '`comments` MAY be an empty list ("comments": []) when there is genuinely nothing to '
         "flag after actively checking — see the rubric below.\n\n"
         + _RUBRIC
-        + '`line` MUST be a line number on the file\'s state AFTER the change (the diff\'s "+" '
-        "side), and MUST refer only to a line that actually appears in the diff below. Use "
-        "each hunk's header (`@@ -old_start,old_count +new_start,new_count @@`) to work out "
-        "line numbers: the first line following a hunk header is `new_start`, and the number "
-        "increments for every following context line (starts with a space) or added line "
-        "(starts with `+`). Removed lines (start with `-`) do not exist on the post-change "
-        "side and MUST NOT be used as `line`.\n\n"
+        + "Every line of the diff below is prefixed with its line number on the file's state "
+        "AFTER the change, then `| `. `line` MUST be the number printed in front of the line "
+        "the comment is about, copied as-is — do not work it out from the hunk header. "
+        "Removed lines (`-` right after the `| `) have no number: they do not exist after the "
+        "change and MUST NOT be used as `line`. `code_snippet` MUST be that one line's text "
+        "exactly as printed after the `| ` and its `+`/space marker, without the number.\n\n"
     )
     if _touches_security_sensitive_path(paths):
         prompt += _SECURITY_CHECKLIST
-    prompt += "=== DIFF UNDER REVIEW ===\n" f"{diff_text}\n"
+    prompt += "=== DIFF UNDER REVIEW ===\n" f"{annotate_diff(diff_text)}\n"
     return prompt + context_section(context_chunks)
 
 
@@ -738,6 +740,9 @@ def _parse_comment(raw_comment) -> ReviewCommentDraft:
     return ReviewCommentDraft(
         path=raw_comment["path"],
         line=int(raw_comment["line"]),
+        # Optional: without it PostComment can only check that `line` is in the diff.
+        code_snippet=snippet if isinstance(snippet := raw_comment.get("code_snippet"), str)
+        and snippet.strip() else None,
         body=raw_comment["body"],
         category=raw_comment["category"],
         severity=raw_comment["severity"],

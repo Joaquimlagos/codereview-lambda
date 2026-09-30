@@ -52,7 +52,8 @@ Serverless harness that routes pull requests to LLM models (Groq, Cerebras, Gemi
                        │
                        └─ 4. PostComment
                               signs in as a GitHub App and posts one review, each comment
-                              anchored to a line of the diff
+                              anchored to a line of the diff (checked against the diff first:
+                              moved to where its code_snippet is, or put in the review body)
                               │
                               └─ GitHub answers 422 (a comment's line isn't in the diff)
                                     ──▶ FALLBACK 2: one plain PR comment (summary + comments)
@@ -273,6 +274,33 @@ any comment's line falls outside the diff, GitHub rejects the whole review (422)
 concatenated as text) rather than losing the review. See
 `specs/001-pr-review-pipeline/research.md`'s "Inline review comments" decision.
 
+**Where a comment's line comes from.** The model doesn't count lines. `InvokeLLM` sends the
+diff with each line's post-change number printed in front of it (`integrations/diff_lines.py`),
+and the model answers with that number plus the line's text:
+
+```
+  27| +    public List<Task> findOverdue(LocalDate today) {
+  28| +        return tasks.values().stream()
+  29| +                .filter(task -> !task.completed() && !task.dueDate().isAfter(today))
+    | -        Task created = new Task(id, task.title(), task.description(), task.completed());
+```
+
+```json
+{"path": "src/.../TaskService.java", "line": 29,
+ "code_snippet": ".filter(task -> !task.completed() && !task.dueDate().isAfter(today))",
+ "body": "...", "category": "bug", "severity": "high"}
+```
+
+Before posting, `PostComment` reads the same diff from S3 and checks each comment
+(`post_comment/anchoring.py`). If `code_snippet` is on `line`, the comment is posted there.
+If it is on another line of that file's diff, the comment moves to the matching line closest
+to `line` and a `line_adjusted` line is logged; a snippet that only matches a removed line is
+posted on that line's LEFT side. A comment without `code_snippet` is posted only if `line` is in
+the diff. Anything else goes into the review's body under the summary instead of onto a line
+it may not be about, and is logged as `comment_unanchored`. Before this, the model worked out
+numbers from the `@@` header and on [PR #21](https://github.com/Joaquimlagos/codereview-app/pull/21)
+put both comments 3 and 9 lines above the bug.
+
 ## GitHub App setup
 
 `PostComment` authenticates as a GitHub App, so reviews appear as the App's bot account
@@ -361,6 +389,8 @@ extract the fields with `parse`.
 | `llm_attempt` | InvokeLLM, before each attempt | `pr`, `model`, `budget`, `estimated_prompt`, `context_chunks_kept`/`dropped`, `skipped` |
 | `llm_call` | InvokeLLM, after each call that reached a provider | `pr`, `tier`, `model`, `attempt`, `fell_back`, `outcome` (`ok`, `transient`, `truncated`, `model_not_found`, `permanent`), `http_status`, `llm_ms`, `finish_reason`, `prompt_tokens`, `output_tokens` (reasoning included), `reasoning_tokens` |
 | `review_posted` | PostComment, once per posted review, only when the state machine passes `timing.startTime` | `pr`, `comments`, `fallback_422` (posted as one plain comment after a 422), `elapsed_ms` (from the start of the execution) |
+| `line_adjusted` | PostComment, once per comment moved to another line | `pr`, `path`, `original_line` (the model's), `line`, `side` (`RIGHT`, or `LEFT` for a removed line), `has_snippet` |
+| `comment_unanchored` | PostComment, once per comment put in the review body instead of on a line | `pr`, `path`, `original_line`, `reason` (`path_not_in_diff`, `line_not_in_diff`, `snippet_not_found`), `has_snippet` |
 
 These lines carry identifiers, counts and timings only: never the prompt, the diff, the
 review's text, a provider's error body or a key (`tests/unit/test_structured_logs.py` checks this). The

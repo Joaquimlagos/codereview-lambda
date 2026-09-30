@@ -1,0 +1,287 @@
+diff --git a/src/main/java/com/codereview/app/tasks/Task.java b/src/main/java/com/codereview/app/tasks/Task.java
+index 8b180d8..4f00f9f 100644
+--- a/src/main/java/com/codereview/app/tasks/Task.java
++++ b/src/main/java/com/codereview/app/tasks/Task.java
+@@ -1,4 +1,10 @@
+ package com.codereview.app.tasks;
+ 
+-public record Task(Long id, String title, String description, boolean completed) {
++import java.time.LocalDate;
++
++public record Task(Long id, String title, String description, boolean completed, LocalDate dueDate) {
++
++    public Task(Long id, String title, String description, boolean completed) {
++        this(id, title, description, completed, null);
++    }
+ }
+diff --git a/src/main/java/com/codereview/app/tasks/TaskController.java b/src/main/java/com/codereview/app/tasks/TaskController.java
+index d337ae8..249025c 100644
+--- a/src/main/java/com/codereview/app/tasks/TaskController.java
++++ b/src/main/java/com/codereview/app/tasks/TaskController.java
+@@ -11,7 +11,9 @@ import org.springframework.web.bind.annotation.RequestBody;
+ import org.springframework.web.bind.annotation.RequestMapping;
+ import org.springframework.web.bind.annotation.RestController;
+ 
++import java.time.LocalDate;
+ import java.util.List;
++import java.util.Map;
+ 
+ @RestController
+ @RequestMapping("/tasks")
+@@ -28,6 +30,20 @@ public class TaskController {
+         return taskService.findAll();
+     }
+ 
++    @GetMapping("/overdue")
++    public List<Task> getOverdue() {
++        return taskService.findOverdue(LocalDate.now());
++    }
++
++    @GetMapping("/stats")
++    public ResponseEntity<?> getStats() {
++        try {
++            return ResponseEntity.ok(taskService.getStats(LocalDate.now()));
++        } catch (RuntimeException e) {
++            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
++        }
++    }
++
+     @GetMapping("/{id}")
+     public ResponseEntity<Task> getById(@PathVariable Long id) {
+         return taskService.findById(id)
+@@ -40,6 +56,11 @@ public class TaskController {
+         return ResponseEntity.status(HttpStatus.CREATED).body(taskService.create(task));
+     }
+ 
++    @PostMapping("/bulk-complete")
++    public List<Task> bulkComplete(@RequestBody List<Long> ids) {
++        return taskService.completeAll(ids);
++    }
++
+     @PutMapping("/{id}")
+     public ResponseEntity<Task> update(@PathVariable Long id, @RequestBody Task task) {
+         return taskService.update(id, task)
+diff --git a/src/main/java/com/codereview/app/tasks/TaskService.java b/src/main/java/com/codereview/app/tasks/TaskService.java
+index a8bb955..fad7ceb 100644
+--- a/src/main/java/com/codereview/app/tasks/TaskService.java
++++ b/src/main/java/com/codereview/app/tasks/TaskService.java
+@@ -2,6 +2,8 @@ package com.codereview.app.tasks;
+ 
+ import org.springframework.stereotype.Service;
+ 
++import java.time.LocalDate;
++import java.util.ArrayList;
+ import java.util.List;
+ import java.util.Map;
+ import java.util.Optional;
+@@ -22,9 +24,15 @@ public class TaskService {
+         return Optional.ofNullable(tasks.get(id));
+     }
+ 
++    public List<Task> findOverdue(LocalDate today) {
++        return tasks.values().stream()
++                .filter(task -> !task.completed() && !task.dueDate().isAfter(today))
++                .toList();
++    }
++
+     public Task create(Task task) {
+         long id = nextId.getAndIncrement();
+-        Task created = new Task(id, task.title(), task.description(), task.completed());
++        Task created = new Task(id, task.title(), task.description(), task.completed(), task.dueDate());
+         tasks.put(id, created);
+         return created;
+     }
+@@ -33,11 +41,34 @@ public class TaskService {
+         if (!tasks.containsKey(id)) {
+             return Optional.empty();
+         }
+-        Task updated = new Task(id, task.title(), task.description(), task.completed());
++        Task updated = new Task(id, task.title(), task.description(), task.completed(), task.dueDate());
+         tasks.put(id, updated);
+         return Optional.of(updated);
+     }
+ 
++    public List<Task> completeAll(List<Long> ids) {
++        List<Task> completed = new ArrayList<>();
++        for (Long id : ids) {
++            Task updated = tasks.computeIfPresent(id,
++                    (key, task) -> new Task(key, task.title(), task.description(), true, task.dueDate()));
++            if (updated != null) {
++                completed.add(updated);
++            }
++        }
++        return completed;
++    }
++
++    public TaskStats getStats(LocalDate today) {
++        long total = tasks.size();
++        long completed = tasks.values().stream().filter(Task::completed).count();
++        long pending = tasks.values().stream().filter(task -> !task.completed()).count();
++        long overdue = tasks.values().stream()
++                .filter(task -> !task.completed() && task.dueDate() != null && task.dueDate().isBefore(today))
++                .count();
++        long completionPercentage = completed * 100 / total;
++        return new TaskStats(total, completed, pending, overdue, completionPercentage);
++    }
++
+     public boolean delete(Long id) {
+         return tasks.remove(id) != null;
+     }
+diff --git a/src/main/java/com/codereview/app/tasks/TaskStats.java b/src/main/java/com/codereview/app/tasks/TaskStats.java
+new file mode 100644
+index 0000000..97be261
+--- /dev/null
++++ b/src/main/java/com/codereview/app/tasks/TaskStats.java
+@@ -0,0 +1,4 @@
++package com.codereview.app.tasks;
++
++public record TaskStats(long total, long completed, long pending, long overdue, long completionPercentage) {
++}
+diff --git a/src/test/java/com/codereview/app/tasks/TaskControllerTest.java b/src/test/java/com/codereview/app/tasks/TaskControllerTest.java
+index 4e9d040..6eb30be 100644
+--- a/src/test/java/com/codereview/app/tasks/TaskControllerTest.java
++++ b/src/test/java/com/codereview/app/tasks/TaskControllerTest.java
+@@ -7,6 +7,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+ import org.springframework.test.context.bean.override.mockito.MockitoBean;
+ import org.springframework.test.web.servlet.MockMvc;
+ 
++import java.time.LocalDate;
+ import java.util.List;
+ import java.util.Optional;
+ 
+@@ -59,6 +60,54 @@ class TaskControllerTest {
+                 .andExpect(jsonPath("$.id").value(1));
+     }
+ 
++    @Test
++    void createAcceptsDueDate() throws Exception {
++        Task request = new Task(null, "New", "desc", false, LocalDate.of(2026, 10, 15));
++        when(taskService.create(any(Task.class)))
++                .thenReturn(new Task(1L, "New", "desc", false, LocalDate.of(2026, 10, 15)));
++
++        mockMvc.perform(post("/tasks")
++                        .contentType("application/json")
++                        .content(objectMapper.writeValueAsString(request)))
++                .andExpect(status().isCreated())
++                .andExpect(jsonPath("$.dueDate").value("2026-10-15"));
++    }
++
++    @Test
++    void getOverdueReturnsOverdueTasks() throws Exception {
++        when(taskService.findOverdue(any(LocalDate.class)))
++                .thenReturn(List.of(new Task(1L, "Late", "desc", false, LocalDate.of(2026, 9, 1))));
++
++        mockMvc.perform(get("/tasks/overdue"))
++                .andExpect(status().isOk())
++                .andExpect(jsonPath("$[0].title").value("Late"));
++    }
++
++    @Test
++    void bulkCompleteReturnsCompletedTasks() throws Exception {
++        when(taskService.completeAll(List.of(1L, 2L))).thenReturn(List.of(
++                new Task(1L, "First", "desc", true),
++                new Task(2L, "Second", "desc", true)));
++
++        mockMvc.perform(post("/tasks/bulk-complete")
++                        .contentType("application/json")
++                        .content(objectMapper.writeValueAsString(List.of(1L, 2L))))
++                .andExpect(status().isOk())
++                .andExpect(jsonPath("$.length()").value(2))
++                .andExpect(jsonPath("$[1].completed").value(true));
++    }
++
++    @Test
++    void getStatsReturnsStats() throws Exception {
++        when(taskService.getStats(any(LocalDate.class))).thenReturn(new TaskStats(4, 2, 2, 1, 50));
++
++        mockMvc.perform(get("/tasks/stats"))
++                .andExpect(status().isOk())
++                .andExpect(jsonPath("$.total").value(4))
++                .andExpect(jsonPath("$.overdue").value(1))
++                .andExpect(jsonPath("$.completionPercentage").value(50));
++    }
++
+     @Test
+     void deleteReturnsNoContentWhenExisted() throws Exception {
+         when(taskService.delete(1L)).thenReturn(true);
+diff --git a/src/test/java/com/codereview/app/tasks/TaskServiceTest.java b/src/test/java/com/codereview/app/tasks/TaskServiceTest.java
+index f6f2adb..9c2042e 100644
+--- a/src/test/java/com/codereview/app/tasks/TaskServiceTest.java
++++ b/src/test/java/com/codereview/app/tasks/TaskServiceTest.java
+@@ -3,12 +3,16 @@ package com.codereview.app.tasks;
+ import org.junit.jupiter.api.BeforeEach;
+ import org.junit.jupiter.api.Test;
+ 
++import java.time.LocalDate;
++import java.util.List;
+ import java.util.Optional;
+ 
+ import static org.assertj.core.api.Assertions.assertThat;
+ 
+ class TaskServiceTest {
+ 
++    private static final LocalDate TODAY = LocalDate.of(2026, 9, 29);
++
+     private TaskService taskService;
+ 
+     @BeforeEach
+@@ -46,6 +50,59 @@ class TaskServiceTest {
+         assertThat(updated.get().completed()).isTrue();
+     }
+ 
++    @Test
++    void createKeepsDueDate() {
++        Task created = taskService.create(new Task(null, "Title", "desc", false, TODAY.plusDays(3)));
++
++        assertThat(created.dueDate()).isEqualTo(TODAY.plusDays(3));
++    }
++
++    @Test
++    void updateChangesDueDate() {
++        Task created = taskService.create(new Task(null, "Title", "desc", false, TODAY.plusDays(3)));
++
++        Optional<Task> updated = taskService.update(created.id(),
++                new Task(null, "Title", "desc", false, TODAY.plusDays(10)));
++
++        assertThat(updated).isPresent();
++        assertThat(updated.get().dueDate()).isEqualTo(TODAY.plusDays(10));
++    }
++
++    @Test
++    void findOverdueReturnsPendingTasksPastTheirDueDate() {
++        taskService.create(new Task(null, "Late", "desc", false, TODAY.minusDays(2)));
++        taskService.create(new Task(null, "Done late", "desc", true, TODAY.minusDays(2)));
++        taskService.create(new Task(null, "Upcoming", "desc", false, TODAY.plusDays(5)));
++
++        List<Task> overdue = taskService.findOverdue(TODAY);
++
++        assertThat(overdue).extracting(Task::title).containsExactly("Late");
++    }
++
++    @Test
++    void completeAllMarksEveryTaskAsCompleted() {
++        Task first = taskService.create(new Task(null, "First", "desc", false, TODAY.plusDays(1)));
++        Task second = taskService.create(new Task(null, "Second", "desc", false, TODAY.plusDays(2)));
++
++        List<Task> completed = taskService.completeAll(List.of(first.id(), second.id()));
++
++        assertThat(completed).hasSize(2).allMatch(Task::completed);
++        assertThat(taskService.findById(first.id())).get().extracting(Task::completed).isEqualTo(true);
++        assertThat(taskService.findById(second.id())).get().extracting(Task::dueDate).isEqualTo(TODAY.plusDays(2));
++    }
++
++    @Test
++    void getStatsCountsTasksByState() {
++        taskService.create(new Task(null, "Done", "desc", true, TODAY.minusDays(1)));
++        taskService.create(new Task(null, "Late", "desc", false, TODAY.minusDays(3)));
++        taskService.create(new Task(null, "Upcoming", "desc", false, TODAY.plusDays(4)));
++        taskService.create(new Task(null, "Also done", "desc", true, TODAY.plusDays(1)));
++
++        TaskStats stats = taskService.getStats(TODAY);
++
++        assertThat(stats).isEqualTo(new TaskStats(4, 2, 2, 1, 50));
++    }
++
+     @Test
+     void deleteReturnsTrueWhenTaskExisted() {
+         Task created = taskService.create(new Task(null, "Title", "desc", false));

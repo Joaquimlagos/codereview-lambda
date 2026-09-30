@@ -1,0 +1,23 @@
+{
+ "pr_id": "21",
+ "summary": "Added dueDate to Task record and new controller endpoints for overdue tasks, bulk completion, and statistics. Introduced service methods to find overdue tasks and compute stats, but new logic contains null handling and division issues.",
+ "comments": [
+  {
+   "path": "src/main/java/com/codereview/app/tasks/TaskService.java",
+   "line": 26,
+   "body": "The filter in findOverdue assumes task.dueDate() is non‑null, leading to a NullPointerException for tasks without a due date; it should check for null before calling isAfter.",
+   "category": "bug",
+   "severity": "high"
+  },
+  {
+   "path": "src/main/java/com/codereview/app/tasks/TaskService.java",
+   "line": 59,
+   "body": "getStats calculates completionPercentage as completed * 100 / total without handling the case where total is zero, causing an ArithmeticException (divide by zero) when no tasks exist.",
+   "category": "bug",
+   "severity": "high"
+  }
+ ],
+ "model_used": "cerebras:gpt-oss-120b:medium",
+ "fell_back": true,
+ "parse_fallback": false
+}

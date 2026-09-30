@@ -9,6 +9,11 @@ rejects the review because a comment references a line outside the diff, the Git
 falls back to a single conversational comment rather than losing the review (see
 integrations/github.py).
 
+Before posting, each comment's line is checked against the diff InvokeLLM reviewed (read from
+S3 by the event's `diffBucket`/`diffKey`) and moved to where its `code_snippet` actually is
+when the two disagree; a comment that can't be placed on a diff line goes into the review's
+body instead (post_comment/anchoring.py).
+
 Posts as a GitHub App installation, so the review appears as the App's bot account rather
 than as whoever owns a personal access token (see research.md, "GitHub App authentication").
 
@@ -22,11 +27,18 @@ import json
 import logging
 from datetime import UTC, datetime
 
-from contracts.models import GeneratedReview
+from contracts.models import GeneratedReview, ReviewCommentDraft
 from integrations.config import require_env
-from integrations.github import GitHubAppAuth, GitHubClient, RestGitHubClient
+from integrations.github import (
+    GitHubAppAuth,
+    GitHubClient,
+    RestGitHubClient,
+    _render_comment_body,
+)
 from integrations.logging_config import configure_project_logging
 from integrations.secrets import resolve_secret_file
+from integrations.storage import S3Storage, Storage
+from post_comment.anchoring import anchor_comments
 
 # Raises this project's own loggers to INFO (root logger and third-party loggers
 # untouched) — see integrations/logging_config.py.
@@ -56,7 +68,9 @@ def _default_github_client() -> GitHubClient:
     return RestGitHubClient(token=auth.installation_token())
 
 
-def post_comment(event: dict, github_client: GitHubClient | None = None) -> dict:
+def post_comment(
+    event: dict, github_client: GitHubClient | None = None, storage: Storage | None = None
+) -> dict:
     # Re-validating here enforces FR-008 defensively: GeneratedReview's own validation rejects
     # an empty/malformed summary, so this MUST NOT construct/post a review for one.
     # Read from "analysis" — the ResultPath key codereview-infra's ASL nests InvokeLLM's
@@ -69,6 +83,15 @@ def post_comment(event: dict, github_client: GitHubClient | None = None) -> dict
     sha = event["sha"]
     github_client = github_client or _default_github_client()
 
+    comments = review.comments
+    summary = review.summary
+    if comments:
+        # The same diff InvokeLLM reviewed; unreadable here fails the run like it does there.
+        storage = storage or S3Storage(bucket=event["diffBucket"])
+        anchoring = anchor_comments(comments, storage.get_text(event["diffKey"]), event["prNumber"])
+        comments = anchoring.anchored
+        summary = _with_unanchored(summary, anchoring.unanchored)
+
     # A posting failure MUST be visible (FR-007) — left uncaught so the Lambda invocation fails
     # rather than silently discarding the error. The GitHubClient itself already falls back
     # from a rejected inline review to a plain comment before raising.
@@ -76,11 +99,19 @@ def post_comment(event: dict, github_client: GitHubClient | None = None) -> dict
         repository=repository,
         pr_id=review.pr_id,
         sha=sha,
-        summary=review.summary,
-        comments=review.comments,
+        summary=summary,
+        comments=comments,
     )
     _log_review_posted(event, review, github_client.used_plain_comment_fallback)
     return comment.model_dump()
+
+
+def _with_unanchored(summary: str, unanchored: list[ReviewCommentDraft]) -> str:
+    """The review body, plus any comment that couldn't be placed on a line of the diff."""
+    if not unanchored:
+        return summary
+    observations = "\n\n".join(f"**{c.path}** — {_render_comment_body(c)}" for c in unanchored)
+    return f"{summary}\n\n---\n{observations}"
 
 
 def _log_review_posted(event: dict, review: GeneratedReview, fell_back_to_comment: bool) -> None:
