@@ -1,7 +1,8 @@
 # PostComment Lambda's own least-privilege execution role (Principle II). Scope: CloudWatch
-# Logs plus read access to exactly its own secret (the GitHub App's private key, which
-# GitHubAppAuth uses to mint an installation token for posting the review). No S3 access: this function only reads `invokeLlm`/`analysis`
-# from the Step Functions event, never touches the diffs bucket.
+# Logs, read access to exactly its own secret (the GitHub App's private key, which
+# GitHubAppAuth uses to mint an installation token for posting the review), and read-only
+# access to the artifacts bucket's prs/ prefix: it re-reads the diff InvokeLLM reviewed to
+# check each comment's line before posting (post_comment/anchoring.py). No index/ access.
 
 data "aws_iam_policy_document" "post_comment_assume_role" {
   statement {
@@ -48,6 +49,19 @@ resource "aws_iam_role_policy" "post_comment_read_github_app_private_key" {
   name   = "${var.project_name}-post-comment-read-github-app-private-key"
   role   = aws_iam_role.post_comment.id
   policy = data.aws_iam_policy_document.post_comment_read_github_app_private_key.json
+}
+
+data "aws_iam_policy_document" "post_comment_read_diffs" {
+  statement {
+    actions   = ["s3:GetObject"]
+    resources = ["arn:aws:s3:::${data.aws_ssm_parameter.artifacts_bucket_name.value}/prs/*"]
+  }
+}
+
+resource "aws_iam_role_policy" "post_comment_read_diffs" {
+  name   = "${var.project_name}-post-comment-read-diffs"
+  role   = aws_iam_role.post_comment.id
+  policy = data.aws_iam_policy_document.post_comment_read_diffs.json
 }
 
 # The function's log group. Lambda would otherwise create it on first invocation, outside

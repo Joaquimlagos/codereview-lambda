@@ -13,7 +13,7 @@ def test_end_to_end_review_without_context(
     stub_llm_router.comments = [
         {
             "path": "src/app.py",
-            "line": 5,
+            "line": 4,
             "body": "Consider logging the exception too.",
             "category": "maintainability",
             "severity": "low",
@@ -28,7 +28,9 @@ def test_end_to_end_review_without_context(
     assert review["comments"][0]["path"] == "src/app.py"
 
     event_after_invoke = {**event_after_route, "analysis": review}
-    comment = post_comment(event_after_invoke, github_client=stub_github_client)
+    comment = post_comment(
+        event_after_invoke, github_client=stub_github_client, storage=stub_storage
+    )
 
     assert comment["posted"] is True
     assert len(stub_github_client.posted_reviews) == 1

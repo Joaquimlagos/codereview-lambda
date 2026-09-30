@@ -2,7 +2,9 @@
 
 `golden_v1_prompt.txt` was produced by the pre-002 `build_prompt` (commit 8e0ee47's tree)
 from `pr_small.diff` and the golden v1 context, so a version 1 context must still yield
-exactly that prompt.
+exactly that prompt. Regenerated once since, when the diff started carrying line numbers and
+`code_snippet` was added to the output shape: only the instructions about `line` and the
+diff's own lines changed, the context section is still the pre-002 one.
 """
 
 import json

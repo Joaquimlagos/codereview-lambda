@@ -135,8 +135,10 @@ absent from the event entirely when it was skipped, per FR-005).
 
 `InvokeLLM` instructs the model (via `build_prompt`, `src/integrations/llm_router.py`) to
 reply with ONLY a JSON object shaped `{"summary": "string", "comments": [{"path", "line",
-"body", "category", "severity"}]}`, with the diff's hunk headers preserved so the model can
-work out each `line`'s post-change number. `category` and `severity` are required on every
+"code_snippet", "body", "category", "severity"}]}`. Every diff line in the prompt is prefixed
+with its post-change number (`integrations/diff_lines.py`'s `annotate_diff`), so the model
+copies `line` rather than counting it from the hunk header, and `code_snippet` is that line's
+text (optional: a comment without it still parses). `category` and `severity` are required on every
 comment — the prompt's rubric instructs the model that `comments` is only for real problems
 (never praise or description, which belong in `summary`) and to actively check each of the
 four categories rather than default to an empty list (research.md, "Review quality rubric").
@@ -201,7 +203,7 @@ fallback" decisions.
 {
   "pr_id": "string",
   "summary": "string",
-  "comments": [{ "path": "string", "line": 1, "body": "string", "category": "bug | security | performance | maintainability", "severity": "low | medium | high" }],
+  "comments": [{ "path": "string", "line": 1, "code_snippet": "string | null", "body": "string", "category": "bug | security | performance | maintainability", "severity": "low | medium | high", "side": "RIGHT" }],
   "model_used": "string",
   "fell_back": false,
   "parse_fallback": false
@@ -211,18 +213,24 @@ fallback" decisions.
 response) MUST NOT produce this shape at all (FR-008) — the pipeline surfaces the failure
 instead of emitting a hollow `GeneratedReview`. `comments` MAY be `[]` — a review with nothing
 line-specific to flag is valid, not an error. `line` is the line number on the file's
-post-change ("+"/right) side.
+post-change ("+"/right) side. `side` is always `"RIGHT"` here; only PostComment changes it.
 
 ## PostComment
 
 **Input**: the accumulated event; `PostComment` reads `analysis` (the `GeneratedReview` above),
 the top-level `repository` field (which GitHub repo to post to), and the top-level `sha` field
 (which commit to anchor the review's inline comments to) — all read directly off the event
-(`src/post_comment/handler.py`).
+(`src/post_comment/handler.py`). When there is at least one comment it also reads the diff at
+`diffBucket`/`diffKey` and checks each comment against it (`src/post_comment/anchoring.py`):
+kept when `code_snippet` is on `line` (or, without a snippet, when `line` is on the diff's
+RIGHT side); moved to the closest line holding `code_snippet` otherwise (`side: "LEFT"` with
+the pre-change number when only a removed line matches), logged as `line_adjusted`; appended
+to the review `body` under the summary when neither works, logged as `comment_unanchored`.
 
 `PostComment` posts `summary` + `comments` as one GitHub PR review via
 `POST /repos/{repo}/pulls/{pr}/reviews`, body `{"commit_id": sha, "body": summary,
-"event": "COMMENT", "comments": [{"path", "line", "side": "RIGHT", "body"}]}`. Each comment's
+"event": "COMMENT", "comments": [{"path", "line", "side", "body"}]}` (`side` is `"RIGHT"`
+unless anchoring moved the comment to a removed line). Each comment's
 `body` is `**[category · severity]** <the model's body text>` (`_render_comment_body`) — the
 Reviews API has no dedicated fields for category/severity, so they're prefixed into the text
 GitHub actually displays. `event` is always `"COMMENT"` — never `APPROVE`/`REQUEST_CHANGES` —
